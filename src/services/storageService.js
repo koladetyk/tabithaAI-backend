@@ -1,10 +1,29 @@
-const { Storage } = require('@google-cloud/storage');
+// In src/services/storageService.js
 
-// Initialize storage with credentials
-const storage = new Storage({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-});
+const { Storage } = require('@google-cloud/storage');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+
+// Initialize storage with proper credential handling
+let storage;
+
+if (process.env.NODE_ENV === 'production' && process.env.GOOGLE_CREDENTIALS_JSON) {
+  // Parse the credentials JSON from the environment variable
+  const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+  
+  // Use directly with the Google Cloud library
+  storage = new Storage({
+    projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+    credentials: credentials
+  });
+} else {
+  // Use local credentials file for development
+  storage = new Storage({
+    projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+  });
+}
 
 const bucketName = process.env.GOOGLE_CLOUD_BUCKET_NAME;
 const bucket = storage.bucket(bucketName);
