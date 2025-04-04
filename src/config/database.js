@@ -3,6 +3,7 @@ require('dotenv').config();
 
 console.log('All environment variables:', Object.keys(process.env));
 console.log('DATABASE_URL present?', !!process.env.DATABASE_URL);
+console.log('DATABASE_URL value:', process.env.DATABASE_URL);
 
 let pool;
 
