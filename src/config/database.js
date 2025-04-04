@@ -5,6 +5,7 @@ let pool;
 
 // If DATABASE_URL is provided (Railway), use it
 if (process.env.DATABASE_URL) {
+  console.log('Using DATABASE_URL connection string');
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
@@ -13,6 +14,7 @@ if (process.env.DATABASE_URL) {
   });
 } else {
   // Otherwise use individual parameters (local development)
+  console.log('Using individual parameters for database connection');
   pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
