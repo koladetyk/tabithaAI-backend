@@ -1,6 +1,9 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+console.log('All environment variables:', Object.keys(process.env));
+console.log('DATABASE_URL present?', !!process.env.DATABASE_URL);
+
 let pool;
 
 // If DATABASE_URL is provided (Railway), use it
