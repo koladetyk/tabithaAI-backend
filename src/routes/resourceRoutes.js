@@ -19,7 +19,18 @@ router.post(
   '/resources',
   isAuthenticated,
   isAdmin,
-  fileUpload.single('file'),
+  (req, res, next) => {
+    fileUpload.single('file')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      next();
+    });
+  },
   resourceController.createResource
 );
 
@@ -28,7 +39,18 @@ router.put(
   '/resources/:id',
   isAuthenticated,
   isAdmin,
-  fileUpload.single('file'),
+  (req, res, next) => {
+    fileUpload.single('file')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      next();
+    });
+  },
   resourceController.updateResource
 );
 
