@@ -5,14 +5,11 @@ const voiceReportController = require('../controllers/voiceReportController');
 const { isAuthenticated } = require('../middleware/auth');
 const fileUpload = require('../middleware/fileUpload');
 
-// Configure upload specifically for audio files
-const audioUpload = fileUpload.single('audioFile');
-
 // Submit a voice report
 router.post(
   '/submit',
   isAuthenticated,
-  audioUpload,
+  fileUpload.single('audioFile'),
   voiceReportController.submitVoiceReport
 );
 

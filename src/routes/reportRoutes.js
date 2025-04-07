@@ -2,23 +2,13 @@ const express = require('express');
 const router = express.Router();
 const reportController = require('../controllers/reportController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
-const { upload } = require('../middleware/fileUpload');
+const fileUpload = require('../middleware/fileUpload');
 
 // Get all reports (admin only)
 router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
-
-// Get individual report by ID
-router.get('/:id', isAuthenticated, reportController.getReportById);
 
 // Get reports by user ID
 router.get('/user/:userId', isAuthenticated, reportController.getReportsByUserId);
-
-// Create new report
-router.post('/', isAuthenticated, reportController.createReport);
-
-// Future endpoints would be added here
-// Get all reports (admin only)
-router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 
 // Reanalyze a report with enhanced AI
 router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport);

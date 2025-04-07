@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const resourceController = require('../controllers/resourceController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
-const { upload } = require('../middleware/fileUpload');
+const fileUpload = require('../middleware/fileUpload');
 
 // Get all resources (with filtering)
 router.get('/resources', resourceController.getAllResources);
@@ -19,7 +19,7 @@ router.post(
   '/resources',
   isAuthenticated,
   isAdmin,
-  upload.single('file'),
+  fileUpload.single('file'),
   resourceController.createResource
 );
 
@@ -28,7 +28,7 @@ router.put(
   '/resources/:id',
   isAuthenticated,
   isAdmin,
-  upload.single('file'),
+  fileUpload.single('file'),
   resourceController.updateResource
 );
 
