@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../config/database');
 const { processWithAI, recordInteraction } = require('../services/enhancedAiService');
 const notificationService = require('../services/notificationService');
+const storageService = require('../services/storageService');
 
 class ReportController {
   // Get all reports (admin only)
@@ -116,9 +117,7 @@ async getReportsByUserId(req, res) {
   }
 }
 
-
-
-  // Create new report
+// Create new report with evidence files
 async createReport(req, res) {
   try {
     const {
@@ -129,7 +128,8 @@ async createReport(req, res) {
       language,
       anonymous,
       confidentiality_level,
-      original_input_type
+      original_input_type,
+      evidence_description
     } = req.body;
     
     // Generate new UUID for report
@@ -207,6 +207,73 @@ async createReport(req, res) {
       }
     }
     
+    // Handle uploaded files if any
+    const evidenceItems = [];
+    if (req.files && req.files.length > 0) {
+      // Process each file as evidence
+      for (const file of req.files) {
+        // Generate evidence ID
+        const evidenceId = uuidv4();
+        
+        // Determine evidence type based on file mime type
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        // Upload file to cloud storage
+        const fileUrl = await storageService.uploadFile(
+          file,
+          req.user.id,
+          reportId,
+          evidenceType
+        );
+        
+        // Create evidence record
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname,
+            fileUrl,
+            evidence_description || null
+          ]
+        );
+        
+        evidenceItems.push(newEvidence.rows[0]);
+        
+        // Analyze evidence with AI if requested
+        if (req.body.analyzeWithAI === 'true') {
+          // This would be replaced with actual AI analysis in production
+          const mockAiAnalysis = {
+            contentType: evidenceType,
+            identifiedElements: ['mock_element_1', 'mock_element_2'],
+            confidence: 0.85
+          };
+          
+          // Update evidence with AI analysis results
+          await db.query(
+            `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
+            [mockAiAnalysis, evidenceId]
+          );
+        }
+      }
+    }
+    
     // Create notification for non-anonymous reports
     if (!anonymous && req.user.id) {
       await notificationService.createAndSendNotification(
@@ -221,13 +288,16 @@ async createReport(req, res) {
     
     return res.status(201).json({
       success: true,
-      data: newReport.rows[0],
+      data: {
+        report: newReport.rows[0],
+        evidence: evidenceItems
+      },
       aiAnalysis: aiResult ? {
         suggestedServices: aiResult.suggestedServices,
         recommendations: aiResult.recommendations,
         riskLevel: aiResult.structuredData?.riskLevel
       } : null,
-      message: 'Report created successfully'
+      message: `Report created successfully with ${evidenceItems.length} evidence items`
     });
   } catch (error) {
     console.error('Error creating report:', error);
@@ -363,7 +433,6 @@ async createReport(req, res) {
     }
   }
 
-  // Archive report
   // Archive report
   async archiveReport(req, res) {
     try {
