@@ -3,10 +3,10 @@ const express = require('express');
 const router = express.Router();
 const voiceReportController = require('../controllers/voiceReportController');
 const { isAuthenticated } = require('../middleware/auth');
-const { upload } = require('../middleware/fileUpload');
+const fileUpload = require('../middleware/fileUpload');
 
 // Configure upload specifically for audio files
-const audioUpload = upload.single('audioFile');
+const audioUpload = fileUpload.single('audioFile');
 
 // Submit a voice report
 router.post(
