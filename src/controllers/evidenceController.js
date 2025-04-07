@@ -9,7 +9,13 @@ class EvidenceController {
   // Add evidence to a report - modified to handle multiple files
   async addEvidence(req, res) {
     try {
+      console.log('Evidence controller called');
       const reportId = req.params.reportId;
+      console.log('Report ID:', reportId);
+      
+      // Check if files were uploaded
+      console.log('Files:', req.files);
+      console.log('File:', req.file);
       
       // Check if report exists
       const report = await db.query('SELECT * FROM reports WHERE id = $1', [reportId]);

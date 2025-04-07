@@ -37,6 +37,34 @@ const upload = multer({
 });
 
 module.exports = {
-  single: upload.single('file'),
-  multiple: upload.array('files', 10) // Allow up to 10 files
+  single: (req, res, next) => {
+    console.log('Single file upload middleware called');
+    upload.single('file')(req, res, (err) => {
+      if (err) {
+        console.error('File upload error:', err);
+        return res.status(400).json({
+          success: false,
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      console.log('Single file upload successful');
+      next();
+    });
+  },
+  multiple: (req, res, next) => {
+    console.log('Multiple file upload middleware called');
+    upload.array('files', 10)(req, res, (err) => {
+      if (err) {
+        console.error('Multiple file upload error:', err);
+        return res.status(400).json({
+          success: false,
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      console.log('Multiple file upload successful, files:', req.files?.length);
+      next();
+    });
+  }
 };
