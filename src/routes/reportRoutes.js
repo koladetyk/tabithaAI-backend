@@ -10,6 +10,9 @@ router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 // Get individual report by ID
 router.get('/:id', isAuthenticated, reportController.getReportById);
 
+// Get reports by user ID
+router.get('/user/:userId', isAuthenticated, reportController.getReportsByUserId);
+
 // Create new report
 router.post('/', isAuthenticated, reportController.createReport);
 

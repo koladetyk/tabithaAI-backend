@@ -82,7 +82,42 @@ class ReportController {
     }
   }
 
-  // Create new report
+  // Get reports by user ID
+async getReportsByUserId(req, res) {
+  try {
+    const userId = req.params.userId;
+    
+    // Check if user has permission (only admin or the user themselves)
+    if (!req.user.is_admin && req.user.id !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized access to these reports'
+      });
+    }
+    
+    // Fetch reports for the specified user
+    const reports = await db.query(
+      'SELECT * FROM reports WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    
+    return res.status(200).json({
+      success: true,
+      count: reports.rows.length,
+      data: reports.rows
+    });
+  } catch (error) {
+    console.error('Error fetching user reports:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving user reports',
+      error: error.message
+    });
+  }
+}
+
+
+
   // Create new report
 async createReport(req, res) {
   try {
