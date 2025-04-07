@@ -15,6 +15,8 @@ const evidenceRoutes = require('./routes/evidenceRoutes');
 const serviceProviderRoutes = require('./routes/serviceProviderRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const voiceReportRoutes = require('./routes/voiceReportRoutes');
+const passport = require('./config/googleAuth');
+const googleAuthRoutes = require('./routes/googleAuthRoutes');
 
 const app = express();
 
@@ -30,6 +32,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(passport.initialize());
 
 // Routes
 app.use('/api/v1/auth', authRoutes);
@@ -38,6 +41,7 @@ app.use('/api/v1', evidenceRoutes);
 app.use('/api/v1/providers', serviceProviderRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/voice-reports', voiceReportRoutes);
+app.use('/api/v1/auth', googleAuthRoutes);
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
