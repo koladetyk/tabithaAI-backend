@@ -49,16 +49,23 @@ class AuthController {
         { expiresIn: '1d' }
       );
       
+      // Set the token as a cookie
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 1 day
+      });
+      
       return res.status(201).json({
         success: true,
-        token,
         user: {
           id: newUser.rows[0].id,
           username: newUser.rows[0].username,
           email: newUser.rows[0].email,
           full_name: newUser.rows[0].full_name
         }
-      });
+    });
     } catch (error) {
       console.error('Error registering user:', error);
       return res.status(500).json({
@@ -110,9 +117,16 @@ class AuthController {
         { expiresIn: '1d' }
       );
       
+      // Set the token as a cookie
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 1 day
+      });
+      
       return res.status(200).json({
         success: true,
-        token,
         user: {
           id: user.rows[0].id,
           username: user.rows[0].username,
@@ -126,6 +140,25 @@ class AuthController {
       return res.status(500).json({
         success: false,
         message: 'Server error logging in',
+        error: error.message
+      });
+    }
+  }
+
+  // Add logout functionality
+  async logout(req, res) {
+    try {
+      res.clearCookie('auth_token');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Logged out successfully'
+      });
+    } catch (error) {
+      console.error('Error logging out:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error logging out',
         error: error.message
       });
     }

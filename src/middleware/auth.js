@@ -1,21 +1,18 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
+// In auth.js middleware
 const isAuthenticated = async (req, res, next) => {
   try {
-    console.log('Headers:', req.headers);
-    const authHeader = req.header('Authorization');
-    console.log('Auth header:', authHeader);
+    // Get token from cookie instead of Authorization header
+    const token = req.cookies.auth_token;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!token) {
       return res.status(401).json({
         success: false,
         message: 'No valid authentication token, access denied'
       });
     }
-    
-    const token = authHeader.replace('Bearer ', '');
-    console.log('Token extracted:', token.substring(0, 20) + '...');
     
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);

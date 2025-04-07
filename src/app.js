@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const dotenv = require('dotenv');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 const http = require('http'); // Added for Socket.io
 
 // Load environment variables
@@ -30,8 +31,8 @@ const socketService = require('./services/socketService');
 socketService.initialize(server);
 
 // Middleware
+app.use(cookieParser());
 app.use(helmet());
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
@@ -49,6 +50,12 @@ app.use('/api/v1', resourceRoutes);
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// In app.js
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true // This is important for cookies to work with CORS
+}));
 
 // Root route
 app.get('/', (req, res) => {

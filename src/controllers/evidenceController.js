@@ -1,10 +1,12 @@
 // src/controllers/evidenceController.js
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs'); 
 const db = require('../config/database');
 const storageService = require('../services/storageService');
 
 class EvidenceController {
-  // Add evidence to a report
+  // In evidenceController.js
+  // Add evidence to a report - modified to handle multiple files
   async addEvidence(req, res) {
     try {
       const reportId = req.params.reportId;
@@ -27,68 +29,85 @@ class EvidenceController {
         });
       }
       
-      // Generate new UUID for evidence
-      const evidenceId = uuidv4();
+      // Handle single file or multiple files
+      const files = req.files || [req.file];
       
-      // Determine evidence type based on file mime type
-      let evidenceType = 'document';
-      if (req.file.mimetype.startsWith('image/')) {
-        evidenceType = 'image';
-      } else if (req.file.mimetype.startsWith('audio/')) {
-        evidenceType = 'audio';
-      } else if (req.file.mimetype.startsWith('video/')) {
-        evidenceType = 'video';
+      if (!files || files.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No files uploaded'
+        });
       }
       
-      // Upload file to Google Cloud Storage
-      const fileUrl = await storageService.uploadFile(
-        req.file, 
-        req.user.id, 
-        reportId, 
-        evidenceType
-      );
+      const createdEvidence = [];
       
-      // Create the evidence record
-      const newEvidence = await db.query(
-        `INSERT INTO evidence (
-          id,
-          report_id,
-          evidence_type,
-          file_path,
-          file_url,
-          description,
-          submitted_date
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
-        [
-          evidenceId,
-          reportId,
-          evidenceType,
-          req.file.originalname, // Store original filename for reference
-          fileUrl, // Store the cloud storage URL
-          req.body.description || null
-        ]
-      );
-      
-      // Record AI interaction if AI analysis was requested
-      if (req.body.analyzeWithAI === 'true') {
-        // This would be replaced with actual AI analysis in production
-        const mockAiAnalysis = {
-          contentType: evidenceType,
-          identifiedElements: ['mock_element_1', 'mock_element_2'],
-          confidence: 0.85
-        };
+      // Process each file
+      for (const file of files) {
+        // Generate new UUID for evidence
+        const evidenceId = uuidv4();
         
-        // Update evidence with AI analysis results
-        await db.query(
-          `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
-          [mockAiAnalysis, evidenceId]
+        // Determine evidence type based on file mime type
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        // Upload file to Google Cloud Storage
+        const fileUrl = await storageService.uploadFile(
+          file, 
+          req.user.id, 
+          reportId, 
+          evidenceType
         );
+        
+        // Create the evidence record
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname, // Store original filename for reference
+            fileUrl, // Store the cloud storage URL
+            req.body.description || null
+          ]
+        );
+        
+        createdEvidence.push(newEvidence.rows[0]);
+        
+        // Record AI interaction if AI analysis was requested
+        if (req.body.analyzeWithAI === 'true') {
+          // This would be replaced with actual AI analysis in production
+          const mockAiAnalysis = {
+            contentType: evidenceType,
+            identifiedElements: ['mock_element_1', 'mock_element_2'],
+            confidence: 0.85
+          };
+          
+          // Update evidence with AI analysis results
+          await db.query(
+            `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
+            [mockAiAnalysis, evidenceId]
+          );
+        }
       }
       
       return res.status(201).json({
         success: true,
-        data: newEvidence.rows[0],
-        message: 'Evidence added successfully'
+        data: createdEvidence,
+        message: `${createdEvidence.length} evidence items added successfully`
       });
     } catch (error) {
       console.error('Error adding evidence:', error);
@@ -239,59 +258,6 @@ class EvidenceController {
     }
   }
   
-  // Delete evidence
-  async deleteEvidence(req, res) {
-    try {
-      const evidenceId = req.params.id;
-      
-      // Get the evidence to check ownership and get file path
-      const evidence = await db.query(
-        'SELECT e.*, r.user_id FROM evidence e JOIN reports r ON e.report_id = r.id WHERE e.id = $1',
-        [evidenceId]
-      );
-      
-      if (evidence.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Evidence not found'
-        });
-      }
-      
-      // Check if user has permission to delete this evidence
-      if (!req.user.is_admin && req.user.id !== evidence.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to delete this evidence'
-        });
-      }
-      
-      // Try to delete the physical file
-      try {
-        if (fs.existsSync(evidence.rows[0].file_path)) {
-          fs.unlinkSync(evidence.rows[0].file_path);
-        }
-      } catch (fileError) {
-        console.error('Error deleting file:', fileError);
-        // Continue with database deletion even if file deletion fails
-      }
-      
-      // Delete the evidence record
-      await db.query('DELETE FROM evidence WHERE id = $1', [evidenceId]);
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Evidence deleted successfully'
-      });
-    } catch (error) {
-      console.error('Error deleting evidence:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error deleting evidence',
-        error: error.message
-      });
-    }
-  }
-
   // Get signed URL for viewing evidence
   async getEvidenceSignedUrl(req, res) {
     try {

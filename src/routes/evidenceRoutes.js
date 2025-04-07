@@ -3,14 +3,10 @@ const express = require('express');
 const router = express.Router();
 const evidenceController = require('../controllers/evidenceController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
-const { upload } = require('../middleware/fileUpload');
+const fileUpload = require('../middleware/fileUpload');
 
 // Add evidence to a report
-router.post('/reports/:reportId/evidence', 
-  isAuthenticated, 
-  upload.single('file'), 
-  evidenceController.addEvidence
-);
+router.post('/reports/:reportId/evidence', isAuthenticated, fileUpload.multiple, evidenceController.addEvidence);
 
 // Get all evidence for a report
 router.get('/reports/:reportId/evidence', 

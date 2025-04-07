@@ -1,41 +1,42 @@
-// src/middleware/fileUpload.js
+// In fileUpload.js middleware
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
 
 // Configure storage
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    let uploadPath = 'src/uploads/';
-    
-    if (file.mimetype.startsWith('image/')) {
-      uploadPath += 'images/';
-    } else if (file.mimetype.startsWith('audio/')) {
-      uploadPath += 'audio/';
-    } else {
-      uploadPath += 'documents/';
-    }
-    
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    
-    cb(null, uploadPath);
+  destination: function(req, file, cb) {
+    cb(null, 'uploads/');
   },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = uuidv4();
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  filename: function(req, file, cb) {
+    cb(null, `${Date.now()}-${file.originalname}`);
   }
 });
 
-// Configure multer to use memory storage for cloud uploads
+// File filter
+const fileFilter = (req, file, cb) => {
+  // Accept images, audio, video, and documents
+  if (
+    file.mimetype.startsWith('image/') ||
+    file.mimetype.startsWith('audio/') ||
+    file.mimetype.startsWith('video/') ||
+    file.mimetype.startsWith('application/')
+  ) {
+    cb(null, true);
+  } else {
+    cb(new Error('Unsupported file type'), false);
+  }
+};
+
+// Export middleware - with options for single or multiple files
 const upload = multer({
-  storage: multer.memoryStorage(), // Change from diskStorage to memoryStorage
-  limits: { 
+  storage: storage,
+  fileFilter: fileFilter,
+  limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit
   }
 });
 
-module.exports = { upload };
+module.exports = {
+  single: upload.single('file'),
+  multiple: upload.array('files', 10) // Allow up to 10 files
+};
