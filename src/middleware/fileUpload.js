@@ -1,11 +1,20 @@
 // In fileUpload.js middleware
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 
-// Configure storage
+// Define the upload directory using an absolute path
+const uploadsDir = path.join(__dirname, '../uploads');
+
+// Ensure uploads directory exists
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure storage with absolute path
 const storage = multer.diskStorage({
   destination: function(req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, uploadsDir);
   },
   filename: function(req, file, cb) {
     cb(null, `${Date.now()}-${file.originalname}`);
