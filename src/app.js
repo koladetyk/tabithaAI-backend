@@ -17,6 +17,8 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const voiceReportRoutes = require('./routes/voiceReportRoutes');
 const passport = require('./config/googleAuth');
 const googleAuthRoutes = require('./routes/googleAuthRoutes');
+const referralRoutes = require('./routes/referralRoutes');
+const resourceRoutes = require('./routes/resourceRoutes');
 
 const app = express();
 
@@ -42,6 +44,8 @@ app.use('/api/v1/providers', serviceProviderRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/voice-reports', voiceReportRoutes);
 app.use('/api/v1/auth', googleAuthRoutes);
+app.use('/api/v1', referralRoutes);
+app.use('/api/v1', resourceRoutes);
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
