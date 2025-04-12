@@ -84,230 +84,279 @@ class ReportController {
   }
 
   // Get reports by user ID
-async getReportsByUserId(req, res) {
-  try {
-    const userId = req.params.userId;
-    
-    // Check if user has permission (only admin or the user themselves)
-    if (!req.user.is_admin && req.user.id !== userId) {
-      return res.status(403).json({
+  async getReportsByUserId(req, res) {
+    try {
+      const userId = req.params.userId;
+      
+      // Check if user has permission (only admin or the user themselves)
+      if (!req.user.is_admin && req.user.id !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized access to these reports'
+        });
+      }
+      
+      // Fetch reports for the specified user
+      const reports = await db.query(
+        'SELECT * FROM reports WHERE user_id = $1 ORDER BY created_at DESC',
+        [userId]
+      );
+      
+      return res.status(200).json({
+        success: true,
+        count: reports.rows.length,
+        data: reports.rows
+      });
+    } catch (error) {
+      console.error('Error fetching user reports:', error);
+      return res.status(500).json({
         success: false,
-        message: 'Unauthorized access to these reports'
+        message: 'Server error retrieving user reports',
+        error: error.message
       });
     }
-    
-    // Fetch reports for the specified user
-    const reports = await db.query(
-      'SELECT * FROM reports WHERE user_id = $1 ORDER BY created_at DESC',
-      [userId]
-    );
-    
-    return res.status(200).json({
-      success: true,
-      count: reports.rows.length,
-      data: reports.rows
-    });
-  } catch (error) {
-    console.error('Error fetching user reports:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error retrieving user reports',
-      error: error.message
-    });
   }
-}
 
-// Create new report with evidence files
-async createReport(req, res) {
-  try {
-    const {
-      incident_date,
-      location_data,
-      incident_type,
-      incident_description,
-      language,
-      anonymous,
-      confidentiality_level,
-      original_input_type,
-      evidence_description
-    } = req.body;
-    
-    // Generate new UUID for report
-    const reportId = uuidv4();
-    
-    // Process with AI if there's a description
-    let aiProcessed = false;
-    let emotionalContext = null;
-    let aiResult = null;
-    let processingTime = null;
-    
-    if (incident_description) {
-      // Use enhanced AI service with Llama3
-      aiResult = await processWithAI(incident_description, language || 'en');
-      
-      if (aiResult) {
-        aiProcessed = true;
-        emotionalContext = aiResult.emotionalContext || null;
-        processingTime = aiResult.processingTime || null;
-      }
-    }
-    
-    // Determine incident type from AI if not provided
-    const finalIncidentType = incident_type || 
-                             (aiResult?.structuredData?.incidentType || 'general incident');
-    
-    // Create new report in database
-    const newReport = await db.query(
-      `INSERT INTO reports (
-        id, 
-        user_id, 
-        incident_date, 
-        location_data, 
-        incident_type, 
+  // Create new report with evidence files
+  async createReport(req, res) {
+    try {
+      const {
+        incident_date,
+        location_data,
+        incident_type,
         incident_description,
         language,
         anonymous,
         confidentiality_level,
         original_input_type,
-        ai_processed,
-        emotional_context
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [
-        reportId,
-        anonymous ? null : req.user.id,
-        incident_date || new Date(),
-        location_data || {},
-        finalIncidentType,
-        incident_description,
-        language || 'en',
-        anonymous || false,
-        confidentiality_level || 1,
-        original_input_type || 'text',
-        aiProcessed,
-        emotionalContext
-      ]
-    );
-    
-    // Record the AI interaction AFTER report creation
-    if (aiResult) {
-      try {
-        await recordInteraction(
-          anonymous ? null : req.user.id,
-          reportId, // Now the report exists in the database
-          'text_processing',
-          incident_description.substring(0, 200),
-          JSON.stringify(aiResult),
-          aiResult.confidence || 0.7,
-          processingTime,
-          'llama3'
-        );
-      } catch (interactionError) {
-        console.error('Error recording AI interaction:', interactionError);
-        // Continue even if recording fails
-      }
-    }
-    
-    // Handle uploaded files if any
-    const evidenceItems = [];
-    if (req.files && req.files.length > 0) {
-      // Process each file as evidence
-      for (const file of req.files) {
-        // Generate evidence ID
-        const evidenceId = uuidv4();
+        evidence_description,
+        email // Add email field to accept guest user's email
+      } = req.body;
+      
+      // Generate new UUID for report
+      const reportId = uuidv4();
+      
+      // Process with AI if there's a description
+      let aiProcessed = false;
+      let emotionalContext = null;
+      let aiResult = null;
+      let processingTime = null;
+      
+      if (incident_description) {
+        // Use enhanced AI service with Llama3
+        aiResult = await processWithAI(incident_description, language || 'en');
         
-        // Determine evidence type based on file mime type
-        let evidenceType = 'document';
-        if (file.mimetype.startsWith('image/')) {
-          evidenceType = 'image';
-        } else if (file.mimetype.startsWith('audio/')) {
-          evidenceType = 'audio';
-        } else if (file.mimetype.startsWith('video/')) {
-          evidenceType = 'video';
+        if (aiResult) {
+          aiProcessed = true;
+          emotionalContext = aiResult.emotionalContext || null;
+          processingTime = aiResult.processingTime || null;
         }
-        
-        // Upload file to cloud storage
-        const fileUrl = await storageService.uploadFile(
-          file,
-          req.user.id,
+      }
+      
+      // Determine incident type from AI if not provided
+      const finalIncidentType = incident_type || 
+                              (aiResult?.structuredData?.incidentType || 'general incident');
+      
+      // Create new report in database
+      const newReport = await db.query(
+        `INSERT INTO reports (
+          id, 
+          user_id, 
+          incident_date, 
+          location_data, 
+          incident_type, 
+          incident_description,
+          language,
+          anonymous,
+          confidentiality_level,
+          original_input_type,
+          ai_processed,
+          emotional_context
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        [
           reportId,
-          evidenceType
-        );
-        
-        // Create evidence record
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
-          [
-            evidenceId,
-            reportId,
-            evidenceType,
-            file.originalname,
-            fileUrl,
-            evidence_description || null
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
-        
-        // Analyze evidence with AI if requested
-        if (req.body.analyzeWithAI === 'true') {
-          // This would be replaced with actual AI analysis in production
-          const mockAiAnalysis = {
-            contentType: evidenceType,
-            identifiedElements: ['mock_element_1', 'mock_element_2'],
-            confidence: 0.85
-          };
-          
-          // Update evidence with AI analysis results
-          await db.query(
-            `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
-            [mockAiAnalysis, evidenceId]
+          anonymous ? null : req.user.id,
+          incident_date || new Date(),
+          location_data || {},
+          finalIncidentType,
+          incident_description,
+          language || 'en',
+          anonymous || false,
+          confidentiality_level || 1,
+          original_input_type || 'text',
+          aiProcessed,
+          emotionalContext
+        ]
+      );
+      
+      // Record the AI interaction AFTER report creation
+      if (aiResult) {
+        try {
+          await recordInteraction(
+            anonymous ? null : req.user.id,
+            reportId, // Now the report exists in the database
+            'text_processing',
+            incident_description.substring(0, 200),
+            JSON.stringify(aiResult),
+            aiResult.confidence || 0.7,
+            processingTime,
+            'llama3'
           );
+        } catch (interactionError) {
+          console.error('Error recording AI interaction:', interactionError);
+          // Continue even if recording fails
         }
       }
+      
+      // Create email verification for anonymous reports with email
+      let verificationCode = null;
+      if (anonymous && email) {
+        try {
+          // Use fixed verification code for testing
+          verificationCode = "12345";
+          
+          // Create verification record
+          await db.query(
+            `INSERT INTO report_email_verification (
+              id, 
+              report_id, 
+              email, 
+              verification_code,
+              expires_at
+            ) VALUES ($1, $2, $3, $4, $5)`,
+            [
+              uuidv4(),
+              reportId,
+              email,
+              verificationCode,
+              new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+            ]
+          );
+          
+          // Log for testing purposes
+          console.log(`TEST MODE: Using fixed verification code "12345" for ${email}`);
+          
+          // In the future, you would send an actual email here
+          // await emailService.sendVerificationCode(...);
+        } catch (verificationError) {
+          console.error('Error creating email verification:', verificationError);
+          // Continue even if verification creation fails
+        }
+      }
+      
+      // Handle uploaded files if any
+      const evidenceItems = [];
+      if (req.files && req.files.length > 0) {
+        // Process each file as evidence
+        for (const file of req.files) {
+          // Generate evidence ID
+          const evidenceId = uuidv4();
+          
+          // Determine evidence type based on file mime type
+          let evidenceType = 'document';
+          if (file.mimetype.startsWith('image/')) {
+            evidenceType = 'image';
+          } else if (file.mimetype.startsWith('audio/')) {
+            evidenceType = 'audio';
+          } else if (file.mimetype.startsWith('video/')) {
+            evidenceType = 'video';
+          }
+          
+          // Upload file to cloud storage
+          const fileUrl = await storageService.uploadFile(
+            file,
+            req.user.id,
+            reportId,
+            evidenceType
+          );
+          
+          // Create evidence record
+          const newEvidence = await db.query(
+            `INSERT INTO evidence (
+              id,
+              report_id,
+              evidence_type,
+              file_path,
+              file_url,
+              description,
+              submitted_date
+            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
+            [
+              evidenceId,
+              reportId,
+              evidenceType,
+              file.originalname,
+              fileUrl,
+              evidence_description || null
+            ]
+          );
+          
+          evidenceItems.push(newEvidence.rows[0]);
+          
+          // Analyze evidence with AI if requested
+          if (req.body.analyzeWithAI === 'true') {
+            // This would be replaced with actual AI analysis in production
+            const mockAiAnalysis = {
+              contentType: evidenceType,
+              identifiedElements: ['mock_element_1', 'mock_element_2'],
+              confidence: 0.85
+            };
+            
+            // Update evidence with AI analysis results
+            await db.query(
+              `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
+              [mockAiAnalysis, evidenceId]
+            );
+          }
+        }
+      }
+      
+      // Create notification for non-anonymous reports
+      if (!anonymous && req.user.id) {
+        await notificationService.createAndSendNotification(
+          req.user.id,
+          'Report Submitted',
+          'Your report has been successfully submitted',
+          'report_created',
+          'report',
+          reportId
+        );
+      }
+      
+      // Prepare response
+      const responseData = {
+        success: true,
+        data: {
+          report: newReport.rows[0],
+          evidence: evidenceItems
+        },
+        aiAnalysis: aiResult ? {
+          suggestedServices: aiResult.suggestedServices,
+          recommendations: aiResult.recommendations,
+          riskLevel: aiResult.structuredData?.riskLevel
+        } : null,
+        message: `Report created successfully with ${evidenceItems.length} evidence items`
+      };
+      
+      // Add verification code to response if this is an anonymous report with email
+      if (anonymous && email && verificationCode) {
+        responseData.verificationInfo = {
+          email: email,
+          verificationCode: verificationCode,
+          message: "Please save this verification code to access your report in the future."
+        };
+      }
+      
+      return res.status(201).json(responseData);
+    } catch (error) {
+      console.error('Error creating report:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error creating report',
+        error: error.message
+      });
     }
-    
-    // Create notification for non-anonymous reports
-    if (!anonymous && req.user.id) {
-      await notificationService.createAndSendNotification(
-        req.user.id,
-        'Report Submitted',
-        'Your report has been successfully submitted',
-        'report_created',
-        'report',
-        reportId
-      );
-    }
-    
-    return res.status(201).json({
-      success: true,
-      data: {
-        report: newReport.rows[0],
-        evidence: evidenceItems
-      },
-      aiAnalysis: aiResult ? {
-        suggestedServices: aiResult.suggestedServices,
-        recommendations: aiResult.recommendations,
-        riskLevel: aiResult.structuredData?.riskLevel
-      } : null,
-      message: `Report created successfully with ${evidenceItems.length} evidence items`
-    });
-  } catch (error) {
-    console.error('Error creating report:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error creating report',
-      error: error.message
-    });
   }
-}
 
   // Update report
   async updateReport(req, res) {
@@ -526,6 +575,7 @@ async createReport(req, res) {
       await db.query('DELETE FROM evidence WHERE report_id = $1', [reportId]);
       await db.query('DELETE FROM referrals WHERE report_id = $1', [reportId]);
       await db.query('DELETE FROM ai_interactions WHERE report_id = $1', [reportId]);
+      await db.query('DELETE FROM report_email_verification WHERE report_id = $1', [reportId]);
       
       // Delete the report
       await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
@@ -609,6 +659,85 @@ async createReport(req, res) {
       return res.status(500).json({
         success: false,
         message: 'Server error updating report status',
+        error: error.message
+      });
+    }
+  }
+
+  // Get reports by email for guest users
+  async getGuestReportsByEmail(req, res) {
+    try {
+      const email = req.params.email;
+      const emailVerificationCode = req.query.code;
+      
+      // Check if verification code is provided
+      if (!emailVerificationCode) {
+        return res.status(400).json({
+          success: false,
+          message: 'Verification code is required'
+        });
+      }
+      
+      // SIMPLIFIED FOR TESTING: Allow "12345" as a universal code
+      if (emailVerificationCode === "12345") {
+        // Find reports associated with this email
+        const reports = await db.query(
+          `SELECT r.* FROM reports r
+           JOIN report_email_verification v ON r.id = v.report_id
+           WHERE v.email = $1
+           ORDER BY r.created_at DESC`,
+          [email]
+        );
+        
+        // Also include evidence with each report
+        if (reports.rows.length > 0) {
+          // Fetch evidence for each report
+          for (let i = 0; i < reports.rows.length; i++) {
+            const evidence = await db.query(
+              'SELECT * FROM evidence WHERE report_id = $1',
+              [reports.rows[i].id]
+            );
+            reports.rows[i].evidence = evidence.rows;
+          }
+        }
+        
+        return res.status(200).json({
+          success: true,
+          count: reports.rows.length,
+          data: reports.rows
+        });
+      }
+      
+      // If not using the test code, proceed with normal verification
+      const reports = await db.query(
+        `SELECT r.* FROM reports r
+         JOIN report_email_verification v ON r.id = v.report_id
+         WHERE v.email = $1 AND v.verification_code = $2
+         ORDER BY r.created_at DESC`,
+        [email, emailVerificationCode]
+      );
+      
+      // Include evidence with each report
+      if (reports.rows.length > 0) {
+        for (let i = 0; i < reports.rows.length; i++) {
+          const evidence = await db.query(
+            'SELECT * FROM evidence WHERE report_id = $1',
+            [reports.rows[i].id]
+          );
+          reports.rows[i].evidence = evidence.rows;
+        }
+      }
+      
+      return res.status(200).json({
+        success: true,
+        count: reports.rows.length,
+        data: reports.rows
+      });
+    } catch (error) {
+      console.error('Error fetching guest reports by email:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error retrieving reports',
         error: error.message
       });
     }
