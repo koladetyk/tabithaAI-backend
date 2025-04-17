@@ -34,4 +34,7 @@ router.patch('/:id/archive', isAuthenticated, reportController.archiveReport);
 // Delete report (admin only)
 router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 
+// guest report creation
+router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
+
 module.exports = router;

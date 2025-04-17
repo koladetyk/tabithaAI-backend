@@ -664,6 +664,235 @@ class ReportController {
     }
   }
 
+  /**
+ * Create a new report as a guest user
+ */
+async createGuestReport(req, res) {
+  try {
+    const {
+      email,  // Email is required for guest reports
+      incident_date,
+      location_data,
+      incident_type,
+      incident_description,
+      language,
+      confidentiality_level,
+      original_input_type,
+      evidence_description
+    } = req.body;
+    
+    // Email is required for guest reports
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required for guest reports'
+      });
+    }
+    
+    // Generate new UUID for report
+    const reportId = uuidv4();
+    
+    // Process with AI if there's a description
+    let aiProcessed = false;
+    let emotionalContext = null;
+    let aiResult = null;
+    let processingTime = null;
+    
+    if (incident_description) {
+      // Use enhanced AI service with Llama3
+      aiResult = await processWithAI(incident_description, language || 'en');
+      
+      if (aiResult) {
+        aiProcessed = true;
+        emotionalContext = aiResult.emotionalContext || null;
+        processingTime = aiResult.processingTime || null;
+      }
+    }
+    
+    // Determine incident type from AI if not provided
+    const finalIncidentType = incident_type || 
+                             (aiResult?.structuredData?.incidentType || 'general incident');
+    
+    // Create new report in database - always anonymous for guest reports
+    const newReport = await db.query(
+      `INSERT INTO reports (
+        id, 
+        user_id, 
+        incident_date, 
+        location_data, 
+        incident_type, 
+        incident_description,
+        language,
+        anonymous,
+        confidentiality_level,
+        original_input_type,
+        ai_processed,
+        emotional_context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [
+        reportId,
+        null,  // Always null for guest reports
+        incident_date || new Date(),
+        location_data || {},
+        finalIncidentType,
+        incident_description,
+        language || 'en',
+        true,  // Always anonymous for guest reports
+        confidentiality_level || 1,
+        original_input_type || 'text',
+        aiProcessed,
+        emotionalContext
+      ]
+    );
+    
+    // Record the AI interaction if applicable
+    if (aiResult) {
+      try {
+        await recordInteraction(
+          null,  // No user ID for guest reports
+          reportId,
+          'text_processing',
+          incident_description.substring(0, 200),
+          JSON.stringify(aiResult),
+          aiResult.confidence || 0.7,
+          processingTime,
+          'llama3'
+        );
+      } catch (interactionError) {
+        console.error('Error recording AI interaction:', interactionError);
+        // Continue even if recording fails
+      }
+    }
+    
+    // Create email verification record
+    let verificationCode = "12345";  // Fixed code for testing
+    
+    try {
+      // Create verification record
+      await db.query(
+        `INSERT INTO report_email_verification (
+          id, 
+          report_id, 
+          email, 
+          verification_code,
+          expires_at
+        ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          uuidv4(),
+          reportId,
+          email,
+          verificationCode,
+          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+        ]
+      );
+      
+      // Log for testing purposes
+      console.log(`TEST MODE: Using fixed verification code "12345" for ${email}`);
+      
+      // In the future, you would send an actual email here
+      // await emailService.sendVerificationCode(...);
+    } catch (verificationError) {
+      console.error('Error creating email verification:', verificationError);
+      // Continue even if verification creation fails
+    }
+    
+    // Handle uploaded files if any
+    const evidenceItems = [];
+    if (req.files && req.files.length > 0) {
+      // Process each file as evidence
+      for (const file of req.files) {
+        // Generate evidence ID
+        const evidenceId = uuidv4();
+        
+        // Determine evidence type based on file mime type
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        // Upload file to cloud storage - use null for user_id
+        const fileUrl = await storageService.uploadFile(
+          file,
+          null,  // No user ID for guest reports
+          reportId,
+          evidenceType
+        );
+        
+        // Create evidence record
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname,
+            fileUrl,
+            evidence_description || null
+          ]
+        );
+        
+        evidenceItems.push(newEvidence.rows[0]);
+        
+        // Analyze evidence with AI if requested
+        if (req.body.analyzeWithAI === 'true') {
+          const mockAiAnalysis = {
+            contentType: evidenceType,
+            identifiedElements: ['mock_element_1', 'mock_element_2'],
+            confidence: 0.85
+          };
+          
+          await db.query(
+            `UPDATE evidence SET ai_analysis_results = $1 WHERE id = $2`,
+            [mockAiAnalysis, evidenceId]
+          );
+        }
+      }
+    }
+    
+    // Prepare response
+    const responseData = {
+      success: true,
+      data: {
+        report: newReport.rows[0],
+        evidence: evidenceItems
+      },
+      aiAnalysis: aiResult ? {
+        suggestedServices: aiResult.suggestedServices,
+        recommendations: aiResult.recommendations,
+        riskLevel: aiResult.structuredData?.riskLevel
+      } : null,
+      verificationInfo: {
+        email: email,
+        verificationCode: verificationCode,
+        message: "Please save this verification code to access your report in the future.",
+        accessUrl: `/api/v1/reports/guest/email/${email}?code=${verificationCode}`
+      },
+      message: `Report created successfully with ${evidenceItems.length} evidence items`
+    };
+    
+    return res.status(201).json(responseData);
+  } catch (error) {
+    console.error('Error creating guest report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating guest report',
+      error: error.message
+    });
+  }
+}
+
   // Get reports by email for guest users
   async getGuestReportsByEmail(req, res) {
     try {
