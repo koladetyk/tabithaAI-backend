@@ -26,10 +26,6 @@ const app = express();
 // Create HTTP server (for Socket.io)
 const server = http.createServer(app);
 
-// Initialize Socket.io
-const socketService = require('./services/socketService');
-socketService.initialize(server);
-
 // Middleware
 app.use(cookieParser());
 app.use(helmet());
@@ -37,21 +33,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
 
-// Routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/reports', reportRoutes);
-app.use('/api/v1', evidenceRoutes);
-app.use('/api/v1/providers', serviceProviderRoutes);
-app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/voice-reports', voiceReportRoutes);
-app.use('/api/v1/auth', googleAuthRoutes);
-app.use('/api/v1', referralRoutes);
-app.use('/api/v1', resourceRoutes);
-
-// Serve static files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Updated version
+// IMPORTANT: CORS configuration must come BEFORE route definitions
 app.use(cors({
   // Allow multiple origins
   origin: function(origin, callback) {
@@ -59,7 +41,9 @@ app.use(cors({
       process.env.FRONTEND_URL, 
       'http://localhost:3000', 
       'http://localhost:8080',
-      'http://127.0.0.1:3000'
+      'http://127.0.0.1:3000',
+      'http://localhost:5173', // Add Vite's default port
+      'http://127.0.0.1:5173'   // Add Vite's default port
     ].filter(Boolean); // Remove undefined values
     
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -77,6 +61,33 @@ app.use(cors({
 
 // Add a preflight handler for OPTIONS requests
 app.options('*', cors());
+
+// Debug middleware to log request details
+app.use((req, res, next) => {
+  console.log(`Request from origin: ${req.headers.origin}`);
+  console.log(`Request method: ${req.method}`);
+  console.log(`Request path: ${req.path}`);
+  console.log(`Cookie header: ${req.headers.cookie}`);
+  next();
+});
+
+// Initialize Socket.io
+const socketService = require('./services/socketService');
+socketService.initialize(server);
+
+// Serve static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Routes - AFTER CORS configuration
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/reports', reportRoutes);
+app.use('/api/v1', evidenceRoutes);
+app.use('/api/v1/providers', serviceProviderRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/voice-reports', voiceReportRoutes);
+app.use('/api/v1/auth', googleAuthRoutes);
+app.use('/api/v1', referralRoutes);
+app.use('/api/v1', resourceRoutes);
 
 // Root route
 app.get('/', (req, res) => {

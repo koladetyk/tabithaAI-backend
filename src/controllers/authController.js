@@ -7,6 +7,15 @@ class AuthController {
   // Register new user
   async register(req, res) {
     try {
+      // Log request for debugging
+      console.log('Register request received:', {
+        body: req.body,
+        headers: {
+          origin: req.headers.origin,
+          'content-type': req.headers['content-type']
+        }
+      });
+      
       const { username, email, password, full_name, phone_number } = req.body;
       
       // Check if username or email already exists
@@ -53,9 +62,12 @@ class AuthController {
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 1 day
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Use 'none' for cross-site in production
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        path: '/' // Ensure cookie is available for all paths
       });
+      
+      console.log('Register successful - cookie set');
       
       return res.status(201).json({
         success: true,
@@ -79,6 +91,15 @@ class AuthController {
   // Login user
   async login(req, res) {
     try {
+      // Log request for debugging
+      console.log('Login request received:', {
+        body: req.body,
+        headers: {
+          origin: req.headers.origin,
+          'content-type': req.headers['content-type']
+        }
+      });
+      
       const { email, password } = req.body;
       
       // Check if user exists
@@ -121,9 +142,12 @@ class AuthController {
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 1 day
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Use 'none' for cross-site in production
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        path: '/' // Ensure cookie is available for all paths
       });
+      
+      console.log('Login successful - cookie set');
       
       return res.status(200).json({
         success: true,
@@ -148,7 +172,17 @@ class AuthController {
   // Add logout functionality
   async logout(req, res) {
     try {
-      res.clearCookie('auth_token');
+      console.log('Logout request received');
+      
+      // Clear cookie with the same path settings that were used when setting it
+      res.clearCookie('auth_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        path: '/'
+      });
+      
+      console.log('Logout successful - cookie cleared');
       
       return res.status(200).json({
         success: true,
@@ -167,10 +201,19 @@ class AuthController {
   // Get current user
   async getCurrentUser(req, res) {
     try {
+      console.log('Get current user request received');
+      
       const user = await db.query(
         'SELECT id, username, email, full_name, is_admin FROM users WHERE id = $1',
         [req.user.id]
       );
+      
+      if (user.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
       
       return res.status(200).json({
         success: true,
