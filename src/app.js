@@ -21,6 +21,12 @@ const googleAuthRoutes = require('./routes/googleAuthRoutes');
 const referralRoutes = require('./routes/referralRoutes');
 const resourceRoutes = require('./routes/resourceRoutes');
 
+// Add near the top of your file, after imports
+console.log('Starting application...');
+console.log('Node environment:', process.env.NODE_ENV);
+console.log('Current directory:', __dirname);
+console.log('File location:', __filename);
+
 const app = express();
 
 // Create HTTP server (for Socket.io)
@@ -163,6 +169,14 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`AI Mode: ${process.env.USE_MOCK_AI === 'true' ? 'Mock Implementation' : 'Real APIs'}`);
+});
+
+// Add at the very bottom of your app.js, just before module.exports
+server.on('error', (error) => {
+  console.error('Server failed to start:', error);
+  // Don't exit the process, as Railway might interpret this as a fatal error
+  // Just log the error in detail
+  console.error(error.stack);
 });
 
 module.exports = app;
