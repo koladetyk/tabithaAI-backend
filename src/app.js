@@ -51,11 +51,32 @@ app.use('/api/v1', resourceRoutes);
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// In app.js
+// Updated version
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true // This is important for cookies to work with CORS
+  // Allow multiple origins
+  origin: function(origin, callback) {
+    const allowedOrigins = [
+      process.env.FRONTEND_URL, 
+      'http://localhost:3000', 
+      'http://localhost:8080',
+      'http://127.0.0.1:3000'
+    ].filter(Boolean); // Remove undefined values
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Add a preflight handler for OPTIONS requests
+app.options('*', cors());
 
 // Root route
 app.get('/', (req, res) => {
