@@ -1,13 +1,13 @@
+// src/controllers/authController.js
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
 class AuthController {
-  // Register new user
+  // Register new user with email OR phone number
   async register(req, res) {
     try {
-      // Log request for debugging
       console.log('Register request received:', {
         body: req.body,
         headers: {
@@ -16,18 +16,49 @@ class AuthController {
         }
       });
       
-      const { username, email, password, full_name, phone_number } = req.body;
+      const { username, email, phone_number, password, full_name } = req.body;
       
-      // Check if username or email already exists
-      const existingUser = await db.query(
-        'SELECT * FROM users WHERE username = $1 OR email = $2',
-        [username, email]
-      );
+      // Validate that either email or phone is provided
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      if (!password || !full_name) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password and full name are required'
+        });
+      }
+      
+      // Check if user already exists with email or phone
+      let existingUserQuery = 'SELECT * FROM users WHERE ';
+      const queryParams = [];
+      
+      if (email && phone_number) {
+        existingUserQuery += 'email = $1 OR phone_number = $2';
+        queryParams.push(email, phone_number);
+      } else if (email) {
+        existingUserQuery += 'email = $1';
+        queryParams.push(email);
+      } else {
+        existingUserQuery += 'phone_number = $1';
+        queryParams.push(phone_number);
+      }
+      
+      if (username) {
+        existingUserQuery += ` OR username = $${queryParams.length + 1}`;
+        queryParams.push(username);
+      }
+      
+      const existingUser = await db.query(existingUserQuery, queryParams);
       
       if (existingUser.rows.length > 0) {
         return res.status(400).json({
           success: false,
-          message: 'Username or email already exists'
+          message: 'User already exists with this email, phone number, or username'
         });
       }
       
@@ -42,13 +73,13 @@ class AuthController {
           id,
           username,
           email,
+          phone_number,
           password_hash,
           full_name,
-          phone_number,
           created_at,
           updated_at
         ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
-        [userId, username, email, hashedPassword, full_name, phone_number]
+        [userId, username, email, phone_number, hashedPassword, full_name]
       );
       
       // Generate JWT token
@@ -62,9 +93,9 @@ class AuthController {
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Use 'none' for cross-site in production
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000, // 1 day
-        path: '/' // Ensure cookie is available for all paths
+        path: '/'
       });
       
       console.log('Register successful - cookie set');
@@ -75,9 +106,10 @@ class AuthController {
           id: newUser.rows[0].id,
           username: newUser.rows[0].username,
           email: newUser.rows[0].email,
+          phone_number: newUser.rows[0].phone_number,
           full_name: newUser.rows[0].full_name
         }
-    });
+      });
     } catch (error) {
       console.error('Error registering user:', error);
       return res.status(500).json({
@@ -88,10 +120,9 @@ class AuthController {
     }
   }
   
-  // Login user
+  // Login user with email OR phone number
   async login(req, res) {
     try {
-      // Log request for debugging
       console.log('Login request received:', {
         body: req.body,
         headers: {
@@ -100,13 +131,36 @@ class AuthController {
         }
       });
       
-      const { email, password } = req.body;
+      const { email, phone_number, password } = req.body;
+      
+      // Validate that either email or phone is provided
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      if (!password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password is required'
+        });
+      }
       
       // Check if user exists
-      const user = await db.query(
-        'SELECT * FROM users WHERE email = $1',
-        [email]
-      );
+      let userQuery = 'SELECT * FROM users WHERE ';
+      let queryParam;
+      
+      if (email) {
+        userQuery += 'email = $1';
+        queryParam = email;
+      } else {
+        userQuery += 'phone_number = $1';
+        queryParam = phone_number;
+      }
+      
+      const user = await db.query(userQuery, [queryParam]);
       
       if (user.rows.length === 0) {
         return res.status(401).json({
@@ -142,9 +196,9 @@ class AuthController {
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // Use 'none' for cross-site in production
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000, // 1 day
-        path: '/' // Ensure cookie is available for all paths
+        path: '/'
       });
       
       console.log('Login successful - cookie set');
@@ -155,6 +209,7 @@ class AuthController {
           id: user.rows[0].id,
           username: user.rows[0].username,
           email: user.rows[0].email,
+          phone_number: user.rows[0].phone_number,
           full_name: user.rows[0].full_name,
           is_admin: user.rows[0].is_admin
         }
@@ -164,6 +219,330 @@ class AuthController {
       return res.status(500).json({
         success: false,
         message: 'Server error logging in',
+        error: error.message
+      });
+    }
+  }
+
+  // Handle Google OAuth callback
+  async handleGoogleCallback(req, res) {
+    try {
+      const { token } = req.body;
+      
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          message: 'Google token is required'
+        });
+      }
+      
+      // Verify the Google token (you'll need to implement this based on your Google OAuth setup)
+      // For now, assuming the token contains user info
+      
+      // Set the token as a cookie
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        path: '/'
+      });
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Google authentication successful'
+      });
+    } catch (error) {
+      console.error('Error handling Google callback:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error handling Google authentication',
+        error: error.message
+      });
+    }
+  }
+
+  // Get all reports for current user
+  async getUserReports(req, res) {
+    try {
+      const userId = req.user.id;
+      
+      // Get all reports for the user with evidence
+      const reports = await db.query(
+        `SELECT r.*, 
+          COALESCE(json_agg(e.*) FILTER (WHERE e.id IS NOT NULL), '[]') as evidence
+        FROM reports r
+        LEFT JOIN evidence e ON r.id = e.report_id
+        WHERE r.user_id = $1
+        GROUP BY r.id
+        ORDER BY r.created_at DESC`,
+        [userId]
+      );
+      
+      return res.status(200).json({
+        success: true,
+        count: reports.rows.length,
+        data: reports.rows
+      });
+    } catch (error) {
+      console.error('Error fetching user reports:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error fetching reports',
+        error: error.message
+      });
+    }
+  }
+
+  // Get reports by email or phone number (for user lookup)
+  async getReportsByContact(req, res) {
+    try {
+      const { email, phone_number } = req.body;
+      
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      // Find user by email or phone
+      let userQuery = 'SELECT id FROM users WHERE ';
+      let queryParam;
+      
+      if (email) {
+        userQuery += 'email = $1';
+        queryParam = email;
+      } else {
+        userQuery += 'phone_number = $1';
+        queryParam = phone_number;
+      }
+      
+      const user = await db.query(userQuery, [queryParam]);
+      
+      if (user.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No user found with this email or phone number'
+        });
+      }
+      
+      // Get all reports for the user
+      const reports = await db.query(
+        `SELECT r.*, 
+          COALESCE(json_agg(e.*) FILTER (WHERE e.id IS NOT NULL), '[]') as evidence
+        FROM reports r
+        LEFT JOIN evidence e ON r.id = e.report_id
+        WHERE r.user_id = $1
+        GROUP BY r.id
+        ORDER BY r.created_at DESC`,
+        [user.rows[0].id]
+      );
+      
+      return res.status(200).json({
+        success: true,
+        count: reports.rows.length,
+        data: reports.rows
+      });
+    } catch (error) {
+      console.error('Error fetching reports by contact:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error fetching reports',
+        error: error.message
+      });
+    }
+  }
+
+  // Update user profile
+  async updateProfile(req, res) {
+    try {
+      const userId = req.user.id;
+      const { username, email, phone_number, full_name } = req.body;
+      
+      // Check if email or phone already exists for another user
+      if (email || phone_number) {
+        let checkQuery = 'SELECT * FROM users WHERE id != $1 AND (';
+        const checkParams = [userId];
+        const conditions = [];
+        
+        if (email) {
+          conditions.push(`email = $${checkParams.length + 1}`);
+          checkParams.push(email);
+        }
+        
+        if (phone_number) {
+          conditions.push(`phone_number = $${checkParams.length + 1}`);
+          checkParams.push(phone_number);
+        }
+        
+        checkQuery += conditions.join(' OR ') + ')';
+        
+        const existingUser = await db.query(checkQuery, checkParams);
+        
+        if (existingUser.rows.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Email or phone number already exists for another user'
+          });
+        }
+      }
+      
+      // Update user profile
+      const updatedUser = await db.query(
+        `UPDATE users SET
+          username = COALESCE($1, username),
+          email = COALESCE($2, email),
+          phone_number = COALESCE($3, phone_number),
+          full_name = COALESCE($4, full_name),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $5
+        RETURNING id, username, email, phone_number, full_name, is_admin`,
+        [username, email, phone_number, full_name, userId]
+      );
+      
+      return res.status(200).json({
+        success: true,
+        user: updatedUser.rows[0],
+        message: 'Profile updated successfully'
+      });
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error updating profile',
+        error: error.message
+      });
+    }
+  }
+
+  // Request password reset (sends token to email/phone)
+  async requestPasswordReset(req, res) {
+    try {
+      const { email, phone_number } = req.body;
+      
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      // Find user by email or phone
+      let userQuery = 'SELECT * FROM users WHERE ';
+      let queryParam;
+      
+      if (email) {
+        userQuery += 'email = $1';
+        queryParam = email;
+      } else {
+        userQuery += 'phone_number = $1';
+        queryParam = phone_number;
+      }
+      
+      const user = await db.query(userQuery, [queryParam]);
+      
+      if (user.rows.length === 0) {
+        // Don't reveal if user doesn't exist for security
+        return res.status(200).json({
+          success: true,
+          message: 'If a user with this email/phone exists, a reset token has been sent'
+        });
+      }
+      
+      // Generate reset token
+      const resetToken = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+      const resetTokenExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+      
+      // Store reset token
+      await db.query(
+        'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+        [resetToken, resetTokenExpires, user.rows[0].id]
+      );
+      
+      // TODO: Send email or SMS with reset token
+      console.log(`Password reset token for ${queryParam}: ${resetToken}`);
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset token has been sent',
+        // FOR TESTING ONLY - remove in production
+        resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
+      });
+    } catch (error) {
+      console.error('Error requesting password reset:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error requesting password reset',
+        error: error.message
+      });
+    }
+  }
+
+  // Reset password using token
+  async resetPassword(req, res) {
+    try {
+      const { email, phone_number, reset_token, new_password } = req.body;
+      
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      if (!reset_token || !new_password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Reset token and new password are required'
+        });
+      }
+      
+      // Find user with valid reset token
+      let userQuery = 'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expires > NOW() AND ';
+      const queryParams = [reset_token];
+      
+      if (email) {
+        userQuery += 'email = $2';
+        queryParams.push(email);
+      } else {
+        userQuery += 'phone_number = $2';
+        queryParams.push(phone_number);
+      }
+      
+      const user = await db.query(userQuery, queryParams);
+      
+      if (user.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid or expired reset token'
+        });
+      }
+      
+      // Hash new password
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(new_password, salt);
+      
+      // Update password and clear reset token
+      await db.query(
+        `UPDATE users SET 
+          password_hash = $1, 
+          reset_token = NULL, 
+          reset_token_expires = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2`,
+        [hashedPassword, user.rows[0].id]
+      );
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset successfully'
+      });
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error resetting password',
         error: error.message
       });
     }
@@ -204,7 +583,7 @@ class AuthController {
       console.log('Get current user request received');
       
       const user = await db.query(
-        'SELECT id, username, email, full_name, is_admin FROM users WHERE id = $1',
+        'SELECT id, username, email, phone_number, full_name, is_admin FROM users WHERE id = $1',
         [req.user.id]
       );
       

@@ -1,3 +1,4 @@
+// src/routes/reportRoutes.js
 const express = require('express');
 const router = express.Router();
 const reportController = require('../controllers/reportController');
@@ -19,8 +20,12 @@ router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport)
 // Get individual report by ID
 router.get('/:id', isAuthenticated, reportController.getReportById);
 
-// Create new report with file upload support
+// Create new report with file upload support (including audio files)
+// This supports both audio files and other file types (images, videos, documents)
 router.post('/', isAuthenticated, fileUpload.multiple, reportController.createReport);
+
+// Create new audio-specific report (supports audio files with transcription and other data)
+router.post('/audio', isAuthenticated, fileUpload.multiple, reportController.createAudioReport);
 
 // Update report
 router.put('/:id', isAuthenticated, reportController.updateReport);
@@ -34,7 +39,7 @@ router.patch('/:id/archive', isAuthenticated, reportController.archiveReport);
 // Delete report (admin only)
 router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 
-// guest report creation
+// Guest report creation (supports all file types including audio)
 router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
 
 module.exports = router;

@@ -972,6 +972,287 @@ async createGuestReport(req, res) {
     }
   }
 
+  // Add this method to your reportController.js
+
+// Create new audio report with enhanced audio processing
+async createAudioReport(req, res) {
+  try {
+    const {
+      audio_title,
+      audio_uri,
+      audio_transcription,
+      incident_date,
+      location_data,
+      incident_type,
+      incident_description,
+      language,
+      anonymous,
+      confidentiality_level,
+      email, // For anonymous reports
+      contact_info // Email/phone for contact
+    } = req.body;
+    
+    // Validate required fields for audio report
+    if (!audio_title && !audio_transcription && !req.files?.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either audio file, audio title, or transcription is required'
+      });
+    }
+    
+    // Generate new UUID for report
+    const reportId = uuidv4();
+    
+    // Process with AI if there's a description or transcription
+    let aiProcessed = false;
+    let emotionalContext = null;
+    let aiResult = null;
+    let processingTime = null;
+    
+    const textToAnalyze = incident_description || audio_transcription;
+    
+    if (textToAnalyze) {
+      // Use enhanced AI service with Llama3
+      aiResult = await processWithAI(textToAnalyze, language || 'en');
+      
+      if (aiResult) {
+        aiProcessed = true;
+        emotionalContext = aiResult.emotionalContext || null;
+        processingTime = aiResult.processingTime || null;
+      }
+    }
+    
+    // Determine incident type from AI if not provided
+    const finalIncidentType = incident_type || 
+                             (aiResult?.structuredData?.incidentType || 'audio incident');
+    
+    // Create new report in database
+    const newReport = await db.query(
+      `INSERT INTO reports (
+        id, 
+        user_id, 
+        incident_date, 
+        location_data, 
+        incident_type, 
+        incident_description,
+        language,
+        anonymous,
+        confidentiality_level,
+        original_input_type,
+        ai_processed,
+        emotional_context,
+        created_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+      [
+        reportId,
+        anonymous ? null : req.user.id,
+        incident_date || new Date(),
+        location_data || {},
+        finalIncidentType,
+        incident_description || audio_transcription || 'Audio report',
+        language || 'en',
+        anonymous || false,
+        confidentiality_level || 1,
+        'audio',
+        aiProcessed,
+        emotionalContext
+      ]
+    );
+    
+    // Record the AI interaction AFTER report creation
+    if (aiResult) {
+      try {
+        await recordInteraction(
+          anonymous ? null : req.user.id,
+          reportId,
+          'audio_text_processing',
+          textToAnalyze.substring(0, 200),
+          JSON.stringify(aiResult),
+          aiResult.confidence || 0.7,
+          processingTime,
+          'llama3'
+        );
+      } catch (interactionError) {
+        console.error('Error recording AI interaction:', interactionError);
+        // Continue even if recording fails
+      }
+    }
+    
+    // Create email verification for anonymous reports with email
+    let verificationCode = null;
+    if (anonymous && email) {
+      try {
+        // Use fixed verification code for testing
+        verificationCode = "12345";
+        
+        // Create verification record
+        await db.query(
+          `INSERT INTO report_email_verification (
+            id, 
+            report_id, 
+            email, 
+            verification_code,
+            expires_at
+          ) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            uuidv4(),
+            reportId,
+            email,
+            verificationCode,
+            new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+          ]
+        );
+        
+        console.log(`TEST MODE: Using fixed verification code "12345" for ${email}`);
+      } catch (verificationError) {
+        console.error('Error creating email verification:', verificationError);
+        // Continue even if verification creation fails
+      }
+    }
+    
+    // Handle uploaded files (audio and other files)
+    const evidenceItems = [];
+    if (req.files && req.files.length > 0) {
+      // Process each file as evidence
+      for (const file of req.files) {
+        // Generate evidence ID
+        const evidenceId = uuidv4();
+        
+        // Determine evidence type based on file mime type
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        // Upload file to cloud storage
+        const fileUrl = await storageService.uploadFile(
+          file,
+          req.user?.id || null,
+          reportId,
+          evidenceType
+        );
+        
+        // Create evidence record with additional audio metadata
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date,
+            metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname,
+            fileUrl,
+            evidenceType === 'audio' ? 
+              `Audio file: ${audio_title || file.originalname}` : 
+              req.body.evidence_description || null,
+            evidenceType === 'audio' ? {
+              audio_title: audio_title,
+              audio_uri: audio_uri,
+              transcription: audio_transcription,
+              contact_info: contact_info
+            } : null
+          ]
+        );
+        
+        evidenceItems.push(newEvidence.rows[0]);
+      }
+    }
+    
+    // If audio_uri is provided without file upload, create evidence record
+    if (audio_uri && !req.files?.length) {
+      const evidenceId = uuidv4();
+      
+      const newEvidence = await db.query(
+        `INSERT INTO evidence (
+          id,
+          report_id,
+          evidence_type,
+          file_path,
+          file_url,
+          description,
+          submitted_date,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+        [
+          evidenceId,
+          reportId,
+          'audio',
+          audio_title || 'Audio URI',
+          audio_uri,
+          `Audio file: ${audio_title || 'Provided via URI'}`,
+          {
+            audio_title: audio_title,
+            audio_uri: audio_uri,
+            transcription: audio_transcription,
+            contact_info: contact_info
+          }
+        ]
+      );
+      
+      evidenceItems.push(newEvidence.rows[0]);
+    }
+    
+    // Create notification for non-anonymous reports
+    if (!anonymous && req.user?.id) {
+      await notificationService.createAndSendNotification(
+        req.user.id,
+        'Audio Report Submitted',
+        'Your audio report has been successfully submitted',
+        'report_created',
+        'report',
+        reportId
+      );
+    }
+    
+    // Prepare response
+    const responseData = {
+      success: true,
+      data: {
+        report: newReport.rows[0],
+        evidence: evidenceItems
+      },
+      aiAnalysis: aiResult ? {
+        suggestedServices: aiResult.suggestedServices,
+        recommendations: aiResult.recommendations,
+        riskLevel: aiResult.structuredData?.riskLevel
+      } : null,
+      message: `Audio report created successfully with ${evidenceItems.length} evidence items`
+    };
+    
+    // Add verification code to response if this is an anonymous report with email
+    if (anonymous && email && verificationCode) {
+      responseData.verificationInfo = {
+        email: email,
+        verificationCode: verificationCode,
+        message: "Please save this verification code to access your report in the future.",
+        accessUrl: `/api/v1/reports/guest/email/${email}?code=${verificationCode}`
+      };
+    }
+    
+    return res.status(201).json(responseData);
+  } catch (error) {
+    console.error('Error creating audio report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating audio report',
+      error: error.message
+    });
+  }
+}
+
   // Analyze existing report with enhanced AI
   async reanalyzeReport(req, res) {
     try {
