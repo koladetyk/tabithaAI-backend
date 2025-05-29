@@ -2,7 +2,11 @@
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 const db = require('../config/database');
+
+// Initialize Google OAuth client
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 class AuthController {
   // Register new user with email OR phone number
@@ -211,7 +215,8 @@ class AuthController {
           email: user.rows[0].email,
           phone_number: user.rows[0].phone_number,
           full_name: user.rows[0].full_name,
-          is_admin: user.rows[0].is_admin
+          is_admin: user.rows[0].is_admin,
+          profile_picture: user.rows[0].profile_picture
         }
       });
     } catch (error) {
@@ -224,9 +229,11 @@ class AuthController {
     }
   }
 
-  // Handle Google OAuth callback
+  // Enhanced Google OAuth callback handler
   async handleGoogleCallback(req, res) {
     try {
+      console.log('Google OAuth callback received:', req.body);
+      
       const { token } = req.body;
       
       if (!token) {
@@ -236,11 +243,91 @@ class AuthController {
         });
       }
       
-      // Verify the Google token (you'll need to implement this based on your Google OAuth setup)
-      // For now, assuming the token contains user info
+      // Verify the Google token
+      let ticket;
+      let payload;
+      
+      try {
+        ticket = await googleClient.verifyIdToken({
+          idToken: token,
+          audience: process.env.GOOGLE_CLIENT_ID
+        });
+        payload = ticket.getPayload();
+      } catch (verifyError) {
+        console.error('Google token verification failed:', verifyError);
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid Google token'
+        });
+      }
+      
+      const { sub: googleId, email, name, picture, email_verified } = payload;
+      
+      // Ensure email is verified
+      if (!email_verified) {
+        return res.status(400).json({
+          success: false,
+          message: 'Google email is not verified'
+        });
+      }
+      
+      console.log('Google user info:', { googleId, email, name, picture });
+      
+      // Check if user exists by Google ID first
+      let user = await db.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+      
+      if (user.rows.length === 0) {
+        // Check if user exists by email
+        user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        
+        if (user.rows.length === 0) {
+          // Create new user
+          const userId = uuidv4();
+          const newUser = await db.query(
+            `INSERT INTO users (
+              id, 
+              email, 
+              full_name, 
+              google_id, 
+              profile_picture, 
+              created_at, 
+              updated_at
+            ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+            [userId, email, name, googleId, picture]
+          );
+          user = newUser;
+          console.log('Created new Google user:', userId);
+        } else {
+          // Update existing user with Google info
+          user = await db.query(
+            `UPDATE users SET 
+              google_id = $1, 
+              profile_picture = COALESCE(profile_picture, $2),
+              full_name = COALESCE(full_name, $3),
+              updated_at = CURRENT_TIMESTAMP 
+            WHERE email = $4 RETURNING *`,
+            [googleId, picture, name, email]
+          );
+          console.log('Updated existing user with Google info:', user.rows[0].id);
+        }
+      } else {
+        // Update last login for existing Google user
+        await db.query(
+          'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+          [user.rows[0].id]
+        );
+        console.log('Google user login:', user.rows[0].id);
+      }
+      
+      // Generate JWT token
+      const jwtToken = jwt.sign(
+        { id: user.rows[0].id },
+        process.env.JWT_SECRET,
+        { expiresIn: '1d' }
+      );
       
       // Set the token as a cookie
-      res.cookie('auth_token', token, {
+      res.cookie('auth_token', jwtToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
@@ -248,9 +335,20 @@ class AuthController {
         path: '/'
       });
       
+      console.log('Google OAuth successful - cookie set');
+      
       return res.status(200).json({
         success: true,
-        message: 'Google authentication successful'
+        message: 'Google authentication successful',
+        user: {
+          id: user.rows[0].id,
+          email: user.rows[0].email,
+          full_name: user.rows[0].full_name,
+          profile_picture: user.rows[0].profile_picture,
+          username: user.rows[0].username,
+          phone_number: user.rows[0].phone_number,
+          is_admin: user.rows[0].is_admin
+        }
       });
     } catch (error) {
       console.error('Error handling Google callback:', error);
@@ -397,7 +495,7 @@ class AuthController {
           full_name = COALESCE($4, full_name),
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $5
-        RETURNING id, username, email, phone_number, full_name, is_admin`,
+        RETURNING id, username, email, phone_number, full_name, is_admin, profile_picture`,
         [username, email, phone_number, full_name, userId]
       );
       
@@ -583,7 +681,7 @@ class AuthController {
       console.log('Get current user request received');
       
       const user = await db.query(
-        'SELECT id, username, email, phone_number, full_name, is_admin FROM users WHERE id = $1',
+        'SELECT id, username, email, phone_number, full_name, is_admin, profile_picture, google_id FROM users WHERE id = $1',
         [req.user.id]
       );
       
