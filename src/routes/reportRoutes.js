@@ -11,6 +11,9 @@ router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 // Get reports by email for guest users (no authentication required)
 router.get('/guest/email/:email', reportController.getGuestReportsByEmail);
 
+// ENHANCED: Get reports by contact info (email/phone lookup)
+router.post('/lookup', reportController.getReportsByContact);
+
 // Get reports by user ID
 router.get('/user/:userId', isAuthenticated, reportController.getReportsByUserId);
 
@@ -20,11 +23,13 @@ router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport)
 // Get individual report by ID
 router.get('/:id', isAuthenticated, reportController.getReportById);
 
-// Create new report with file upload support (including audio files)
-// This supports both audio files and other file types (images, videos, documents)
+// ENHANCED: Create new report with array structure support
+// Supports: audio_files[], images_videos[], note, email, phoneNumber, address
+// File uploads are additional to the arrays (URIs can be provided in arrays)
 router.post('/', isAuthenticated, fileUpload.multiple, reportController.createReport);
 
-// Create new audio-specific report (supports audio files with transcription and other data)
+// LEGACY: Create new audio-specific report (backwards compatibility)
+// This now redirects to the main createReport with transformed data
 router.post('/audio', isAuthenticated, fileUpload.multiple, reportController.createAudioReport);
 
 // Update report
@@ -39,7 +44,8 @@ router.patch('/:id/archive', isAuthenticated, reportController.archiveReport);
 // Delete report (admin only)
 router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 
-// Guest report creation (supports all file types including audio)
+// ENHANCED: Guest report creation with array structure support
+// No authentication required - perfect for anonymous reporting
 router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
 
 module.exports = router;
