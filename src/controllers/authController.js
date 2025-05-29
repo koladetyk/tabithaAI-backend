@@ -13,6 +13,15 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 class AuthController {
+  constructor() {
+    // Debug SendGrid environment variables
+    console.log('SENDGRID_API_KEY present?', !!process.env.SENDGRID_API_KEY);
+    console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
+    if (process.env.SENDGRID_API_KEY) {
+      console.log('SENDGRID_API_KEY starts with SG?', process.env.SENDGRID_API_KEY.startsWith('SG.'));
+    }
+  }
+
   // Helper method to send reset email - Fixed method binding
   async sendResetEmail(email, resetToken) {
     try {
