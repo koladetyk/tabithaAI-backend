@@ -118,65 +118,66 @@ class ReportController {
   }
 
   // Get reports by email/phone for user assistance
-  async getReportsByContact(req, res) {
-    try {
-      const { email, phoneNumber } = req.body;
-      
-      if (!email && !phoneNumber) {
-        return res.status(400).json({
-          success: false,
-          message: 'Either email or phoneNumber is required'
-        });
-      }
-      
-      let query = '';
-      let params = [];
-      
-      if (email && phoneNumber) {
-        query = `SELECT * FROM reports 
-                WHERE contact_info->>'email' = $1 
-                OR contact_info->>'phoneNumber' = $2 
-                ORDER BY created_at DESC`;
-        params = [email, phoneNumber];
-      } else if (email) {
-        query = `SELECT * FROM reports 
-                WHERE contact_info->>'email' = $1 
-                ORDER BY created_at DESC`;
-        params = [email];
-      } else {
-        query = `SELECT * FROM reports 
-                WHERE contact_info->>'phoneNumber' = $1 
-                ORDER BY created_at DESC`;
-        params = [phoneNumber];
-      }
-      
-      const reports = await db.query(query, params);
-      
-      // Include evidence with each report
-      if (reports.rows.length > 0) {
-        for (let i = 0; i < reports.rows.length; i++) {
-          const evidence = await db.query(
-            'SELECT * FROM evidence WHERE report_id = $1',
-            [reports.rows[i].id]
-          );
-          reports.rows[i].evidence = evidence.rows;
-        }
-      }
-      
-      return res.status(200).json({
-        success: true,
-        count: reports.rows.length,
-        data: reports.rows
-      });
-    } catch (error) {
-      console.error('Error fetching reports by contact:', error);
-      return res.status(500).json({
+async getReportsByContact(req, res) {
+  try {
+    // Change from req.body to req.query for GET request
+    const { email, phoneNumber } = req.query;
+    
+    if (!email && !phoneNumber) {
+      return res.status(400).json({
         success: false,
-        message: 'Server error retrieving reports',
-        error: error.message
+        message: 'Either email or phoneNumber query parameter is required'
       });
     }
+    
+    let query = '';
+    let params = [];
+    
+    if (email && phoneNumber) {
+      query = `SELECT * FROM reports 
+              WHERE contact_info->>'email' = $1 
+              OR contact_info->>'phoneNumber' = $2 
+              ORDER BY created_at DESC`;
+      params = [email, phoneNumber];
+    } else if (email) {
+      query = `SELECT * FROM reports 
+              WHERE contact_info->>'email' = $1 
+              ORDER BY created_at DESC`;
+      params = [email];
+    } else {
+      query = `SELECT * FROM reports 
+              WHERE contact_info->>'phoneNumber' = $1 
+              ORDER BY created_at DESC`;
+      params = [phoneNumber];
+    }
+    
+    const reports = await db.query(query, params);
+    
+    // Include evidence with each report
+    if (reports.rows.length > 0) {
+      for (let i = 0; i < reports.rows.length; i++) {
+        const evidence = await db.query(
+          'SELECT * FROM evidence WHERE report_id = $1',
+          [reports.rows[i].id]
+        );
+        reports.rows[i].evidence = evidence.rows;
+      }
+    }
+    
+    return res.status(200).json({
+      success: true,
+      count: reports.rows.length,
+      data: reports.rows
+    });
+  } catch (error) {
+    console.error('Error fetching reports by contact:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving reports',
+      error: error.message
+    });
   }
+}
 
   // Analyze existing report with enhanced AI
   async reanalyzeReport(req, res) {

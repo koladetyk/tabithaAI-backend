@@ -12,7 +12,7 @@ router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 router.get('/guest/email/:email', reportController.getGuestReportsByEmail);
 
 // ENHANCED: Get reports by contact info (email/phone lookup)
-router.post('/lookup', reportController.getReportsByContact);
+router.get('/lookup', reportController.getReportsByContact);
 
 // Get reports by user ID
 router.get('/user/:userId', isAuthenticated, reportController.getReportsByUserId);
