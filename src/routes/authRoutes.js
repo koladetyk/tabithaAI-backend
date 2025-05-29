@@ -12,6 +12,8 @@ router.post('/login', authController.login);
 
 // Google OAuth callback endpoint
 router.post('/google/callback', authController.handleGoogleCallback);
+// Also allow simple /google endpoint for direct token verification  
+router.post('/google', authController.handleGoogleCallback);
 
 // Get current user
 router.get('/me', isAuthenticated, authController.getCurrentUser);
