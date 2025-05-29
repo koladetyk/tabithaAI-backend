@@ -580,7 +580,15 @@ class AuthController {
   // ENHANCED: Request password reset with SendGrid email support
   async requestPasswordReset(req, res) {
     try {
-      const { email, phone_number } = req.body;
+       // Debug logging
+    console.log('=== PASSWORD RESET DEBUG ===');
+    console.log('this:', typeof this);
+    console.log('this.sendResetEmail:', typeof this.sendResetEmail);
+    console.log('SENDGRID_API_KEY present?', !!process.env.SENDGRID_API_KEY);
+    console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
+    console.log('================================');
+    
+    const { email, phone_number } = req.body;
       
       if (!email && !phone_number) {
         return res.status(400).json({
