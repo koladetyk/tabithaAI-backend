@@ -13,7 +13,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 class AuthController {
-  // Helper method to send reset email
+  // Helper method to send reset email - Fixed method binding
   async sendResetEmail(email, resetToken) {
     try {
       const msg = {
@@ -634,8 +634,9 @@ class AuthController {
       );
       
       if (isEmailReset) {
-        // Send email using SendGrid
+        // Send email using SendGrid - Fixed method call
         try {
+          // Use the instance method correctly
           await this.sendResetEmail(user.rows[0].email, resetToken);
           console.log(`Password reset email sent to: ${user.rows[0].email}`);
           
