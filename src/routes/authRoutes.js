@@ -26,7 +26,7 @@ router.post('/reports/lookup', authController.getReportsByContact);
 router.patch('/profile', isAuthenticated, authController.updateProfile);
 
 // Change password (sends token to email/phone first)
-router.post('/password/reset-request', authController.requestPasswordReset);
+router.post('/password/reset-request', authController.requestPasswordReset.bind(authController));
 router.post('/password/reset', authController.resetPassword);
 
 // Logout
