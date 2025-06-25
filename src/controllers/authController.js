@@ -72,120 +72,125 @@ class AuthController {
     }
   }
 
-  // Register new user with email OR phone number
-  async register(req, res) {
-    try {
-      console.log('Register request received:', {
-        body: req.body,
-        headers: {
-          origin: req.headers.origin,
-          'content-type': req.headers['content-type']
-        }
-      });
-      
-      const { username, email, phone_number, password, full_name } = req.body;
-      
-      // Validate that either email or phone is provided
-      if (!email && !phone_number) {
-        return res.status(400).json({
-          success: false,
-          message: 'Either email or phone number is required'
-        });
+  // Register new user with email OR phone number (address optional)
+async register(req, res) {
+  try {
+    console.log('Register request received:', {
+      body: req.body,
+      headers: {
+        origin: req.headers.origin,
+        'content-type': req.headers['content-type']
       }
-      
-      if (!password || !full_name) {
-        return res.status(400).json({
-          success: false,
-          message: 'Password and full name are required'
-        });
-      }
-      
-      // Check if user already exists with email or phone
-      let existingUserQuery = 'SELECT * FROM users WHERE ';
-      const queryParams = [];
-      
-      if (email && phone_number) {
-        existingUserQuery += 'email = $1 OR phone_number = $2';
-        queryParams.push(email, phone_number);
-      } else if (email) {
-        existingUserQuery += 'email = $1';
-        queryParams.push(email);
-      } else {
-        existingUserQuery += 'phone_number = $1';
-        queryParams.push(phone_number);
-      }
-      
-      if (username) {
-        existingUserQuery += ` OR username = $${queryParams.length + 1}`;
-        queryParams.push(username);
-      }
-      
-      const existingUser = await db.query(existingUserQuery, queryParams);
-      
-      if (existingUser.rows.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'User already exists with this email, phone number, or username'
-        });
-      }
-      
-      // Hash password
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-      
-      // Create new user
-      const userId = uuidv4();
-      const newUser = await db.query(
-        `INSERT INTO users (
-          id,
-          username,
-          email,
-          phone_number,
-          password_hash,
-          full_name,
-          created_at,
-          updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
-        [userId, username, email, phone_number, hashedPassword, full_name]
-      );
-      
-      // Generate JWT token
-      const token = jwt.sign(
-        { id: newUser.rows[0].id },
-        process.env.JWT_SECRET,
-        { expiresIn: '1d' }
-      );
-      
-      // Set the token as a cookie
-      res.cookie('auth_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
-        path: '/'
-      });
-      
-      console.log('Register successful - cookie set');
-      
-      return res.status(201).json({
-        success: true,
-        user: {
-          id: newUser.rows[0].id,
-          username: newUser.rows[0].username,
-          email: newUser.rows[0].email,
-          phone_number: newUser.rows[0].phone_number,
-          full_name: newUser.rows[0].full_name
-        }
-      });
-    } catch (error) {
-      console.error('Error registering user:', error);
-      return res.status(500).json({
+    });
+    
+    const { username, email, phone_number, password, full_name, address } = req.body;
+    
+    // Validate that either email or phone is provided
+    if (!email && !phone_number) {
+      return res.status(400).json({
         success: false,
-        message: 'Server error registering user',
-        error: error.message
+        message: 'Either email or phone number is required'
       });
     }
+    
+    if (!password || !full_name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password and full name are required'
+      });
+    }
+    
+    // Check if user already exists with email or phone
+    let existingUserQuery = 'SELECT * FROM users WHERE ';
+    const queryParams = [];
+    
+    if (email && phone_number) {
+      existingUserQuery += 'email = $1 OR phone_number = $2';
+      queryParams.push(email, phone_number);
+    } else if (email) {
+      existingUserQuery += 'email = $1';
+      queryParams.push(email);
+    } else {
+      existingUserQuery += 'phone_number = $1';
+      queryParams.push(phone_number);
+    }
+    
+    if (username) {
+      existingUserQuery += ` OR username = $${queryParams.length + 1}`;
+      queryParams.push(username);
+    }
+    
+    const existingUser = await db.query(existingUserQuery, queryParams);
+    
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email, phone number, or username'
+      });
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    // Create new user (including address field, even if null)
+    const userId = uuidv4();
+    const newUser = await db.query(
+      `INSERT INTO users (
+        id,
+        username,
+        email,
+        phone_number,
+        password_hash,
+        full_name,
+        address,
+        created_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
+      RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture`,
+      [userId, username, email, phone_number, hashedPassword, full_name, address || null]
+    );
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: newUser.rows[0].id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+    
+    // Set the token as a cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      path: '/'
+    });
+    
+    console.log('Register successful - cookie set');
+    
+    return res.status(201).json({
+      success: true,
+      user: {
+        id: newUser.rows[0].id,
+        username: newUser.rows[0].username,
+        email: newUser.rows[0].email,
+        phone_number: newUser.rows[0].phone_number,
+        full_name: newUser.rows[0].full_name,
+        address: newUser.rows[0].address,
+        is_admin: newUser.rows[0].is_admin,
+        profile_picture: newUser.rows[0].profile_picture
+      }
+    });
+  } catch (error) {
+    console.error('Error registering user:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error registering user',
+      error: error.message
+    });
   }
+}
   
   // Login user with email OR phone number
   async login(req, res) {
@@ -272,6 +277,7 @@ class AuthController {
       
       return res.status(200).json({
         success: true,
+        token: token, // Add this line - return the token
         user: {
           id: user.rows[0].id,
           username: user.rows[0].username,
@@ -403,6 +409,7 @@ class AuthController {
       return res.status(200).json({
         success: true,
         message: 'Google authentication successful',
+        token: jwtToken, // Add this line - return the token
         user: {
           id: user.rows[0].id,
           email: user.rows[0].email,
@@ -516,66 +523,136 @@ class AuthController {
   }
 
   // Update user profile
-  async updateProfile(req, res) {
-    try {
-      const userId = req.user.id;
-      const { username, email, phone_number, full_name } = req.body;
-      
-      // Check if email or phone already exists for another user
-      if (email || phone_number) {
-        let checkQuery = 'SELECT * FROM users WHERE id != $1 AND (';
-        const checkParams = [userId];
-        const conditions = [];
-        
-        if (email) {
-          conditions.push(`email = $${checkParams.length + 1}`);
-          checkParams.push(email);
-        }
-        
-        if (phone_number) {
-          conditions.push(`phone_number = $${checkParams.length + 1}`);
-          checkParams.push(phone_number);
-        }
-        
-        checkQuery += conditions.join(' OR ') + ')';
-        
-        const existingUser = await db.query(checkQuery, checkParams);
-        
-        if (existingUser.rows.length > 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Email or phone number already exists for another user'
-          });
-        }
-      }
-      
-      // Update user profile
-      const updatedUser = await db.query(
-        `UPDATE users SET
-          username = COALESCE($1, username),
-          email = COALESCE($2, email),
-          phone_number = COALESCE($3, phone_number),
-          full_name = COALESCE($4, full_name),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $5
-        RETURNING id, username, email, phone_number, full_name, is_admin, profile_picture`,
-        [username, email, phone_number, full_name, userId]
-      );
-      
-      return res.status(200).json({
-        success: true,
-        user: updatedUser.rows[0],
-        message: 'Profile updated successfully'
-      });
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      return res.status(500).json({
+  // Update user profile with proper error handling and transaction
+async updateProfile(req, res) {
+  const client = await db.getClient(); // Get a database client for transaction
+  
+  try {
+    await client.query('BEGIN'); // Start transaction
+    
+    const userId = req.user.id;
+    const { username, email, phone_number, full_name, address } = req.body;
+    
+    console.log('Updating profile for user:', userId, 'with data:', req.body);
+    
+    // Validate that at least one field is provided
+    if (!username && !email && !phone_number && !full_name && !address) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
         success: false,
-        message: 'Server error updating profile',
-        error: error.message
+        message: 'At least one field must be provided for update'
       });
     }
+    
+    // Check if email or phone already exists for another user
+    if (email || phone_number) {
+      let checkQuery = 'SELECT id, email, phone_number FROM users WHERE id != $1 AND (';
+      const checkParams = [userId];
+      const conditions = [];
+      
+      if (email) {
+        conditions.push(`email = $${checkParams.length + 1}`);
+        checkParams.push(email);
+      }
+      
+      if (phone_number) {
+        conditions.push(`phone_number = $${checkParams.length + 1}`);
+        checkParams.push(phone_number);
+      }
+      
+      checkQuery += conditions.join(' OR ') + ')';
+      
+      const existingUser = await client.query(checkQuery, checkParams);
+      
+      if (existingUser.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          message: 'Email or phone number already exists for another user'
+        });
+      }
+    }
+    
+    // Build dynamic update query
+    const updateFields = [];
+    const updateParams = [];
+    let paramCount = 1;
+    
+    if (username !== undefined) {
+      updateFields.push(`username = $${paramCount}`);
+      updateParams.push(username);
+      paramCount++;
+    }
+    
+    if (email !== undefined) {
+      updateFields.push(`email = $${paramCount}`);
+      updateParams.push(email);
+      paramCount++;
+    }
+    
+    if (phone_number !== undefined) {
+      updateFields.push(`phone_number = $${paramCount}`);
+      updateParams.push(phone_number);
+      paramCount++;
+    }
+    
+    if (full_name !== undefined) {
+      updateFields.push(`full_name = $${paramCount}`);
+      updateParams.push(full_name);
+      paramCount++;
+    }
+    
+    if (address !== undefined) {
+      updateFields.push(`address = $${paramCount}`);
+      updateParams.push(address);
+      paramCount++;
+    }
+    
+    // Always update the updated_at timestamp
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(userId); // Add userId as the last parameter
+    
+    const updateQuery = `
+      UPDATE users SET 
+        ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture, updated_at
+    `;
+    
+    console.log('Executing update query:', updateQuery, 'with params:', updateParams);
+    
+    const updatedUser = await client.query(updateQuery, updateParams);
+    
+    if (updatedUser.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    await client.query('COMMIT'); // Commit the transaction
+    
+    console.log('Profile updated successfully:', updatedUser.rows[0]);
+    
+    return res.status(200).json({
+      success: true,
+      user: updatedUser.rows[0],
+      message: 'Profile updated successfully'
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK'); // Rollback on error
+    console.error('Error updating profile:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error updating profile',
+      error: error.message
+    });
+  } finally {
+    client.release(); // Always release the client back to the pool
   }
+}
 
   // ENHANCED: Request password reset with SendGrid email support
   async requestPasswordReset(req, res) {
@@ -797,35 +874,182 @@ class AuthController {
   }
   
   // Get current user
-  async getCurrentUser(req, res) {
-    try {
-      console.log('Get current user request received');
-      
-      const user = await db.query(
-        'SELECT id, username, email, phone_number, full_name, is_admin, profile_picture, google_id FROM users WHERE id = $1',
-        [req.user.id]
-      );
-      
-      if (user.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-      
-      return res.status(200).json({
-        success: true,
-        user: user.rows[0]
-      });
-    } catch (error) {
-      console.error('Error getting user:', error);
-      return res.status(500).json({
+  // Get current user with all profile fields including address
+async getCurrentUser(req, res) {
+  try {
+    console.log('Get current user request received for user ID:', req.user.id);
+    
+    const user = await db.query(
+      `SELECT 
+        id, 
+        username, 
+        email, 
+        phone_number, 
+        full_name, 
+        address,
+        is_admin, 
+        profile_picture, 
+        google_id,
+        created_at,
+        updated_at
+      FROM users 
+      WHERE id = $1`,
+      [req.user.id]
+    );
+    
+    if (user.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'Server error getting user',
-        error: error.message
+        message: 'User not found'
       });
     }
+    
+    console.log('User data retrieved:', user.rows[0]);
+    
+    return res.status(200).json({
+      success: true,
+      user: user.rows[0]
+    });
+  } catch (error) {
+    console.error('Error getting user:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error getting user',
+      error: error.message
+    });
   }
+}
+
+// Update user profile with proper error handling and transaction
+async updateProfile(req, res) {
+  const client = await db.getClient(); // Get a database client for transaction
+  
+  try {
+    await client.query('BEGIN'); // Start transaction
+    
+    const userId = req.user.id;
+    const { username, email, phone_number, full_name, address } = req.body;
+    
+    console.log('Updating profile for user:', userId, 'with data:', req.body);
+    
+    // Validate that at least one field is provided
+    if (!username && !email && !phone_number && !full_name && !address) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'At least one field must be provided for update'
+      });
+    }
+    
+    // Check if email or phone already exists for another user
+    if (email || phone_number) {
+      let checkQuery = 'SELECT id, email, phone_number FROM users WHERE id != $1 AND (';
+      const checkParams = [userId];
+      const conditions = [];
+      
+      if (email) {
+        conditions.push(`email = $${checkParams.length + 1}`);
+        checkParams.push(email);
+      }
+      
+      if (phone_number) {
+        conditions.push(`phone_number = $${checkParams.length + 1}`);
+        checkParams.push(phone_number);
+      }
+      
+      checkQuery += conditions.join(' OR ') + ')';
+      
+      const existingUser = await client.query(checkQuery, checkParams);
+      
+      if (existingUser.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          message: 'Email or phone number already exists for another user'
+        });
+      }
+    }
+    
+    // Build dynamic update query
+    const updateFields = [];
+    const updateParams = [];
+    let paramCount = 1;
+    
+    if (username !== undefined) {
+      updateFields.push(`username = $${paramCount}`);
+      updateParams.push(username);
+      paramCount++;
+    }
+    
+    if (email !== undefined) {
+      updateFields.push(`email = $${paramCount}`);
+      updateParams.push(email);
+      paramCount++;
+    }
+    
+    if (phone_number !== undefined) {
+      updateFields.push(`phone_number = $${paramCount}`);
+      updateParams.push(phone_number);
+      paramCount++;
+    }
+    
+    if (full_name !== undefined) {
+      updateFields.push(`full_name = $${paramCount}`);
+      updateParams.push(full_name);
+      paramCount++;
+    }
+    
+    if (address !== undefined) {
+      updateFields.push(`address = $${paramCount}`);
+      updateParams.push(address);
+      paramCount++;
+    }
+    
+    // Always update the updated_at timestamp
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(userId); // Add userId as the last parameter
+    
+    const updateQuery = `
+      UPDATE users SET 
+        ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture, updated_at
+    `;
+    
+    console.log('Executing update query:', updateQuery, 'with params:', updateParams);
+    
+    const updatedUser = await client.query(updateQuery, updateParams);
+    
+    if (updatedUser.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    await client.query('COMMIT'); // Commit the transaction
+    
+    console.log('Profile updated successfully:', updatedUser.rows[0]);
+    
+    return res.status(200).json({
+      success: true,
+      user: updatedUser.rows[0],
+      message: 'Profile updated successfully'
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK'); // Rollback on error
+    console.error('Error updating profile:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error updating profile',
+      error: error.message
+    });
+  } finally {
+    client.release(); // Always release the client back to the pool
+  }
+}
 }
 
 module.exports = new AuthController();
