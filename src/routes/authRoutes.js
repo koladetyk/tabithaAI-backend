@@ -10,8 +10,12 @@ router.post('/register', authController.register);
 // Login with email or phone
 router.post('/login', authController.login);
 
+// Login with admin
+router.post('/admin/login', authController.adminLogin);
+
 // Google OAuth callback endpoint
 router.post('/google/callback', authController.handleGoogleCallback);
+
 // Also allow simple /google endpoint for direct token verification  
 router.post('/google', authController.handleGoogleCallback);
 

@@ -3,85 +3,164 @@ const db = require('../config/database');
 const { processWithAI, recordInteraction } = require('../services/enhancedAiService');
 const notificationService = require('../services/notificationService');
 const storageService = require('../services/storageService');
+const evidenceController = require('./evidenceController');
 
 class ReportController {
   // Get all reports (admin only)
   async getAllReports(req, res) {
     try {
-      // Check if user is admin
-      if (!req.user.is_admin) {
-        return res.status(403).json({
-          success: false,
-          message: 'Unauthorized. Admin access required.'
-        });
-      }
-      
-      const reports = await db.query(
-        'SELECT * FROM reports ORDER BY created_at DESC'
-      );
-      
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+  
+      const [totalResult, paginatedResult] = await Promise.all([
+        db.query('SELECT COUNT(*) FROM reports'),
+        db.query('SELECT * FROM reports ORDER BY report_date DESC LIMIT $1 OFFSET $2', [limit, offset])
+      ]);
+  
+      const total = parseInt(totalResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
+  
       return res.status(200).json({
         success: true,
-        count: reports.rows.length,
-        data: reports.rows
+        data: paginatedResult.rows,
+        pagination: { total, page, totalPages }
       });
-    } catch (error) {
-      console.error('Error fetching reports:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error retrieving reports',
-        error: error.message
-      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Server error' });
     }
   }
+  
+  
 
-  // Get individual report by ID
-  async getReportById(req, res) {
-    try {
-      const reportId = req.params.id;
-      
-      // Fetch the report with evidence and referrals
-      const report = await db.query(
-        `SELECT r.*, 
-          COALESCE(json_agg(e.*) FILTER (WHERE e.id IS NOT NULL), '[]') as evidence,
-          COALESCE(json_agg(ref.*) FILTER (WHERE ref.id IS NOT NULL), '[]') as referrals
-        FROM reports r
-        LEFT JOIN evidence e ON r.id = e.report_id
-        LEFT JOIN referrals ref ON r.id = ref.report_id
-        WHERE r.id = $1
-        GROUP BY r.id`,
-        [reportId]
-      );
-      
-      // Check if report exists
-      if (report.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check if user has permission to access this report
-      if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'Unauthorized access to this report'
-        });
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: report.rows[0]
-      });
-    } catch (error) {
-      console.error('Error fetching report:', error);
-      return res.status(500).json({
+  // Update your getReportById method to include evidence with URLs
+// Update your getReportById method to include evidence with URLs
+async getReportById(req, res) {
+  try {
+    const reportId = req.params.id;
+    
+    // Get the report
+    const report = await db.query(
+      'SELECT * FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (report.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'Server error retrieving report',
-        error: error.message
+        message: 'Report not found'
       });
     }
+    
+    // Check if user has permission to view this report
+    if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this report'
+      });
+    }
+    
+    // Get evidence for this report with URLs and categorization
+    const evidenceResult = await evidenceController.getEvidenceForReportDetails(
+      reportId, 
+      req.user.id, 
+      req.user.is_admin
+    );
+    
+    // Return report with evidence
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...report.rows[0],
+        evidence: evidenceResult.evidence,
+        evidenceSummary: evidenceResult.summary
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching report',
+      error: error.message
+    });
   }
+}
+
+// Update your getAllReports method to include evidence summaries
+async getAllReports(req, res) {
+  try {
+    const { page = 1, limit = 10, status, incident_type } = req.query;
+    const offset = (page - 1) * limit;
+    
+    // Build query based on user role and filters
+    let query = 'SELECT * FROM reports';
+    let countQuery = 'SELECT COUNT(*) FROM reports';
+    let queryParams = [];
+    let conditions = [];
+    
+    // Add user permission check
+    if (!req.user.is_admin) {
+      conditions.push('user_id = $' + (queryParams.length + 1));
+      queryParams.push(req.user.id);
+    }
+    
+    // Add filters
+    if (status) {
+      conditions.push('status = $' + (queryParams.length + 1));
+      queryParams.push(status);
+    }
+    
+    if (incident_type) {
+      conditions.push('incident_type = $' + (queryParams.length + 1));
+      queryParams.push(incident_type);
+    }
+    
+    // Add WHERE clause if conditions exist
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+      countQuery += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    // Add pagination
+    query += ' ORDER BY submitted_date DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
+    queryParams.push(limit, offset);
+    
+    // Execute queries
+    const [reports, totalCount] = await Promise.all([
+      db.query(query, queryParams),
+      db.query(countQuery, queryParams.slice(0, -2)) // Remove limit and offset for count
+    ]);
+    
+    // Get evidence summaries for all reports
+    const reportIds = reports.rows.map(report => report.id);
+    const evidenceSummaries = await evidenceController.getEvidenceSummaryForReports(reportIds);
+    
+    // Add evidence summaries to reports
+    const reportsWithEvidence = reports.rows.map(report => ({
+      ...report,
+      evidenceSummary: evidenceSummaries[report.id] || { total: 0, images: 0, audios: 0, videos: 0, documents: 0 }
+    }));
+    
+    return res.status(200).json({
+      success: true,
+      data: reportsWithEvidence,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(totalCount.rows[0].count),
+        pages: Math.ceil(totalCount.rows[0].count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching reports:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching reports',
+      error: error.message
+    });
+  }
+}
 
   // Get reports by user ID
   async getReportsByUserId(req, res) {
@@ -359,11 +438,14 @@ async getReportsByContact(req, res) {
         phoneNumber: phoneNumber || null,
         address: address || null
       };
+
+      const title = `Case-${reportId.slice(0, 8)}`;
       
       // Create new report in database
       const newReport = await db.query(
         `INSERT INTO reports (
           id, 
+          title,
           user_id, 
           incident_date, 
           location_data, 
@@ -376,9 +458,14 @@ async getReportsByContact(req, res) {
           ai_processed,
           emotional_context,
           contact_info
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        ) VALUES (
+          $1, 
+          $2, 
+          $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        ) RETURNING *`,
         [
           reportId,
+          title,
           anonymous ? null : req.user?.id,
           incident_date || new Date(),
           address ? { address } : {},
@@ -593,7 +680,10 @@ async getReportsByContact(req, res) {
       const responseData = {
         success: true,
         data: {
-          report: newReport.rows[0],
+          report: {
+                ...newReport.rows[0],
+                 title
+               },
           evidence: evidenceItems,
           audio_files_processed: parsedAudioFiles.length,
           images_videos_processed: parsedImagesVideos.length,
@@ -767,11 +857,14 @@ async getReportsByContact(req, res) {
         phoneNumber: phoneNumber || null,
         address: address || null
       };
+
+      const title = `Case-${reportId.slice(0, 8)}`;
       
       // Create new report in database - always anonymous for guest reports
       const newReport = await db.query(
         `INSERT INTO reports (
           id, 
+          title,
           user_id, 
           incident_date, 
           location_data, 
@@ -784,9 +877,10 @@ async getReportsByContact(req, res) {
           ai_processed,
           emotional_context,
           contact_info
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
         [
           reportId,
+          title,
           null,  // Always null for guest reports
           incident_date || new Date(),
           address ? { address } : {},
@@ -985,7 +1079,10 @@ async getReportsByContact(req, res) {
       const responseData = {
         success: true,
         data: {
-          report: newReport.rows[0],
+          report: {
+               ...newReport.rows[0],
+               title
+             },
           evidence: evidenceItems,
           audio_files_processed: parsedAudioFiles.length,
           images_videos_processed: parsedImagesVideos.length,
@@ -1015,6 +1112,29 @@ async getReportsByContact(req, res) {
       });
     }
   }
+
+  async getDashboardStats(req, res) {
+    try {
+      const [users, totalReports, pendingReports, completedReports] = await Promise.all([
+        db.query('SELECT COUNT(*) FROM users'),
+        db.query('SELECT COUNT(*) FROM reports'),
+        db.query("SELECT COUNT(*) FROM reports WHERE status = 'pending'"),
+        db.query("SELECT COUNT(*) FROM reports WHERE status = 'completed'")
+      ]);
+  
+      return res.status(200).json({
+        success: true,
+        data: {
+          total_users: parseInt(users.rows[0].count),
+          total_reports: parseInt(totalReports.rows[0].count),
+          pending_reports: parseInt(pendingReports.rows[0].count),
+          completed_reports: parseInt(completedReports.rows[0].count)
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: 'Dashboard error' });
+    }
+  }  
 
   // Get reports by email for guest users
   async getGuestReportsByEmail(req, res) {
@@ -1094,6 +1214,27 @@ async getReportsByContact(req, res) {
       });
     }
   }
+
+  // Public access: read-only report info
+  async getPublicReportById(req, res) {
+    try {
+      const reportId = req.params.id;
+      const report = await db.query(
+        'SELECT id, title, incident_type, incident_description, report_date, location_data FROM reports WHERE id = $1',
+        [reportId]
+      );
+
+      if (report.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Report not found' });
+      }
+
+      return res.status(200).json({ success: true, data: report.rows[0] });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Error retrieving report' });
+    }
+  }
+
 
   // Update report
   async updateReport(req, res) {

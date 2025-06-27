@@ -11,6 +11,9 @@ router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 // Get reports by email for guest users (no authentication required)
 router.get('/guest/email/:email', reportController.getGuestReportsByEmail);
 
+// Public access to individual report via public ID or token
+router.get('/public/:id', reportController.getPublicReportById);
+
 // ENHANCED: Get reports by contact info (email/phone lookup)
 router.get('/lookup', reportController.getReportsByContact);
 
@@ -22,6 +25,9 @@ router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport)
 
 // Get individual report by ID
 router.get('/:id', isAuthenticated, reportController.getReportById);
+
+// Get Dashboard stats 
+router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboardStats);
 
 // ENHANCED: Create new report with array structure support
 // Supports: audio_files[], images_videos[], note, email, phoneNumber, address

@@ -5,8 +5,212 @@ const db = require('../config/database');
 const storageService = require('../services/storageService');
 
 class EvidenceController {
-  // In evidenceController.js
-  // Add evidence to a report - modified to handle multiple files
+  // Helper method to generate signed URLs for evidence
+  async generateEvidenceUrls(evidenceItems) {
+    const evidenceWithUrls = [];
+    
+    for (const evidence of evidenceItems) {
+      try {
+        // Generate signed URL for each evidence item
+        const signedUrl = await storageService.getSignedUrl(evidence.file_url, 60); // 60 minutes validity
+        
+        evidenceWithUrls.push({
+          ...evidence,
+          viewUrl: signedUrl,
+          downloadUrl: signedUrl // Same URL can be used for both viewing and downloading
+        });
+      } catch (error) {
+        console.error(`Error generating signed URL for evidence ${evidence.id}:`, error);
+        // Include evidence without URL if signing fails
+        evidenceWithUrls.push({
+          ...evidence,
+          viewUrl: null,
+          downloadUrl: null,
+          error: 'Unable to generate access URL'
+        });
+      }
+    }
+    
+    return evidenceWithUrls;
+  }
+
+  // Helper method to categorize evidence by type
+  categorizeEvidence(evidenceItems) {
+    const categorized = {
+      images: [],
+      audios: [],
+      videos: [],
+      documents: []
+    };
+
+    evidenceItems.forEach(evidence => {
+      switch (evidence.evidence_type) {
+        case 'image':
+          categorized.images.push(evidence);
+          break;
+        case 'audio':
+          categorized.audios.push(evidence);
+          break;
+        case 'video':
+          categorized.videos.push(evidence);
+          break;
+        case 'document':
+        default:
+          categorized.documents.push(evidence);
+          break;
+      }
+    });
+
+    return categorized;
+  }
+
+  // Modified method to get all evidence for a report with URLs and categorization
+  async getEvidenceForReport(req, res) {
+    try {
+      const reportId = req.params.reportId;
+      const { categorize = 'false' } = req.query; // Optional query parameter
+      
+      // Check if report exists
+      const report = await db.query('SELECT * FROM reports WHERE id = $1', [reportId]);
+      
+      if (report.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Report not found'
+        });
+      }
+      
+      // Check if user has permission to view this report's evidence
+      if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this report\'s evidence'
+        });
+      }
+      
+      // Get all evidence for the report
+      const evidence = await db.query(
+        'SELECT * FROM evidence WHERE report_id = $1 ORDER BY submitted_date DESC',
+        [reportId]
+      );
+      
+      // Generate signed URLs for all evidence
+      const evidenceWithUrls = await this.generateEvidenceUrls(evidence.rows);
+      
+      // Return categorized or flat response based on query parameter
+      if (categorize === 'true') {
+        const categorizedEvidence = this.categorizeEvidence(evidenceWithUrls);
+        
+        return res.status(200).json({
+          success: true,
+          count: evidenceWithUrls.length,
+          data: categorizedEvidence,
+          summary: {
+            total: evidenceWithUrls.length,
+            images: categorizedEvidence.images.length,
+            audios: categorizedEvidence.audios.length,
+            videos: categorizedEvidence.videos.length,
+            documents: categorizedEvidence.documents.length
+          }
+        });
+      } else {
+        return res.status(200).json({
+          success: true,
+          count: evidenceWithUrls.length,
+          data: evidenceWithUrls
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching evidence:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error fetching evidence',
+        error: error.message
+      });
+    }
+  }
+
+  // Updated method to get single evidence by ID with URLs
+  async getEvidenceById(req, res) {
+    try {
+      const evidenceId = req.params.id;
+      
+      // Get the evidence
+      const evidence = await db.query(
+        'SELECT e.*, r.user_id FROM evidence e JOIN reports r ON e.report_id = r.id WHERE e.id = $1',
+        [evidenceId]
+      );
+      
+      if (evidence.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Evidence not found'
+        });
+      }
+      
+      // Check if user has permission to view this evidence
+      if (!req.user.is_admin && req.user.id !== evidence.rows[0].user_id) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this evidence'
+        });
+      }
+      
+      // Generate signed URLs for the evidence
+      const evidenceWithUrls = await this.generateEvidenceUrls([evidence.rows[0]]);
+      
+      return res.status(200).json({
+        success: true,
+        data: evidenceWithUrls[0]
+      });
+    } catch (error) {
+      console.error('Error fetching evidence:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error fetching evidence',
+        error: error.message
+      });
+    }
+  }
+
+  // New method specifically for getting evidence for report details
+  async getEvidenceForReportDetails(reportId, userId, isAdmin = false) {
+    try {
+      // Get all evidence for the report
+      const evidence = await db.query(
+        'SELECT * FROM evidence WHERE report_id = $1 ORDER BY submitted_date DESC',
+        [reportId]
+      );
+      
+      // Generate signed URLs for all evidence
+      const evidenceWithUrls = await this.generateEvidenceUrls(evidence.rows);
+      
+      // Categorize the evidence
+      const categorizedEvidence = this.categorizeEvidence(evidenceWithUrls);
+      
+      return {
+        success: true,
+        evidence: categorizedEvidence,
+        summary: {
+          total: evidenceWithUrls.length,
+          images: categorizedEvidence.images.length,
+          audios: categorizedEvidence.audios.length,
+          videos: categorizedEvidence.videos.length,
+          documents: categorizedEvidence.documents.length
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching evidence for report details:', error);
+      return {
+        success: false,
+        evidence: { images: [], audios: [], videos: [], documents: [] },
+        summary: { total: 0, images: 0, audios: 0, videos: 0, documents: 0 },
+        error: error.message
+      };
+    }
+  }
+
+  // Existing methods remain the same...
   async addEvidence(req, res) {
     try {
       console.log('Evidence controller called');
@@ -110,9 +314,12 @@ class EvidenceController {
         }
       }
       
+      // Generate URLs for the created evidence
+      const evidenceWithUrls = await this.generateEvidenceUrls(createdEvidence);
+      
       return res.status(201).json({
         success: true,
-        data: createdEvidence,
+        data: evidenceWithUrls,
         message: `${createdEvidence.length} evidence items added successfully`
       });
     } catch (error) {
@@ -124,10 +331,8 @@ class EvidenceController {
       });
     }
   }
-  
-  // Other methods remain the same, but update deleteEvidence to use cloud storage
-  
-  // Delete evidence
+
+  // Other existing methods remain unchanged...
   async deleteEvidence(req, res) {
     try {
       const evidenceId = req.params.id;
@@ -179,92 +384,8 @@ class EvidenceController {
       });
     }
   }
-  
-  // Get all evidence for a report
-  async getEvidenceForReport(req, res) {
-    try {
-      const reportId = req.params.reportId;
-      
-      // Check if report exists
-      const report = await db.query('SELECT * FROM reports WHERE id = $1', [reportId]);
-      
-      if (report.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check if user has permission to view this report's evidence
-      if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to view this report\'s evidence'
-        });
-      }
-      
-      // Get all evidence for the report
-      const evidence = await db.query(
-        'SELECT * FROM evidence WHERE report_id = $1 ORDER BY submitted_date DESC',
-        [reportId]
-      );
-      
-      return res.status(200).json({
-        success: true,
-        count: evidence.rows.length,
-        data: evidence.rows
-      });
-    } catch (error) {
-      console.error('Error fetching evidence:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error fetching evidence',
-        error: error.message
-      });
-    }
-  }
-  
-  // Get single evidence by ID
-  async getEvidenceById(req, res) {
-    try {
-      const evidenceId = req.params.id;
-      
-      // Get the evidence
-      const evidence = await db.query(
-        'SELECT e.*, r.user_id FROM evidence e JOIN reports r ON e.report_id = r.id WHERE e.id = $1',
-        [evidenceId]
-      );
-      
-      if (evidence.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Evidence not found'
-        });
-      }
-      
-      // Check if user has permission to view this evidence
-      if (!req.user.is_admin && req.user.id !== evidence.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to view this evidence'
-        });
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: evidence.rows[0]
-      });
-    } catch (error) {
-      console.error('Error fetching evidence:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error fetching evidence',
-        error: error.message
-      });
-    }
-  }
-  
-  // Get signed URL for viewing evidence
+
+  // Keep the existing getEvidenceSignedUrl method for backward compatibility
   async getEvidenceSignedUrl(req, res) {
     try {
       const evidenceId = req.params.id;
@@ -314,7 +435,7 @@ class EvidenceController {
       });
     }
   }
-  
+
   // Update evidence description
   async updateEvidenceDescription(req, res) {
     try {
@@ -355,9 +476,12 @@ class EvidenceController {
         [description, evidenceId]
       );
       
+      // Generate URLs for the updated evidence
+      const evidenceWithUrls = await this.generateEvidenceUrls([updatedEvidence.rows[0]]);
+      
       return res.status(200).json({
         success: true,
-        data: updatedEvidence.rows[0],
+        data: evidenceWithUrls[0],
         message: 'Evidence description updated successfully'
       });
     } catch (error) {

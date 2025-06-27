@@ -298,6 +298,51 @@ async register(req, res) {
     }
   }
 
+  async adminLogin(req, res) {
+    const { email, password } = req.body;
+  
+    try {
+      const userResult = await db.query(
+        'SELECT * FROM users WHERE email = $1 AND is_admin = true',
+        [email]
+      );
+      const user = userResult.rows[0];
+  
+      if (!user || !await bcrypt.compare(password, user.password_hash)) {
+        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      }
+  
+      const token = jwt.sign(
+        { id: user.id },
+        process.env.JWT_SECRET,
+        { expiresIn: '1d' }
+      );
+  
+      // Optional: Set as cookie if using in browser
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 24 * 60 * 60 * 1000,
+        path: '/'
+      });
+  
+      return res.status(200).json({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          is_admin: true // ✅ frontend can now detect admin
+        }
+      });
+    } catch (error) {
+      console.error('Error in adminLogin:', error);
+      return res.status(500).json({ success: false, message: 'Server error' });
+    }
+  }  
+  
+
   // Enhanced Google OAuth callback handler
   async handleGoogleCallback(req, res) {
     try {
