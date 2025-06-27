@@ -567,137 +567,122 @@ async register(req, res) {
     }
   }
 
-  // Update user profile
-  // Update user profile with proper error handling and transaction
-async updateProfile(req, res) {
-  const client = await db.getClient(); // Get a database client for transaction
+  async updateProfile(req, res) {
+    const client = await db.connect(); // Corrected: get a pooled client
   
-  try {
-    await client.query('BEGIN'); // Start transaction
-    
-    const userId = req.user.id;
-    const { username, email, phone_number, full_name, address } = req.body;
-    
-    console.log('Updating profile for user:', userId, 'with data:', req.body);
-    
-    // Validate that at least one field is provided
-    if (!username && !email && !phone_number && !full_name && !address) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({
-        success: false,
-        message: 'At least one field must be provided for update'
-      });
-    }
-    
-    // Check if email or phone already exists for another user
-    if (email || phone_number) {
-      let checkQuery = 'SELECT id, email, phone_number FROM users WHERE id != $1 AND (';
-      const checkParams = [userId];
-      const conditions = [];
-      
-      if (email) {
-        conditions.push(`email = $${checkParams.length + 1}`);
-        checkParams.push(email);
-      }
-      
-      if (phone_number) {
-        conditions.push(`phone_number = $${checkParams.length + 1}`);
-        checkParams.push(phone_number);
-      }
-      
-      checkQuery += conditions.join(' OR ') + ')';
-      
-      const existingUser = await client.query(checkQuery, checkParams);
-      
-      if (existingUser.rows.length > 0) {
+    try {
+      await client.query('BEGIN');
+  
+      const userId = req.user.id;
+      const { username, email, phone_number, full_name, address } = req.body;
+  
+      console.log('Updating profile for user:', userId, 'with data:', req.body);
+  
+      if (!username && !email && !phone_number && !full_name && !address) {
         await client.query('ROLLBACK');
         return res.status(400).json({
           success: false,
-          message: 'Email or phone number already exists for another user'
+          message: 'At least one field must be provided for update'
         });
       }
-    }
-    
-    // Build dynamic update query
-    const updateFields = [];
-    const updateParams = [];
-    let paramCount = 1;
-    
-    if (username !== undefined) {
-      updateFields.push(`username = $${paramCount}`);
-      updateParams.push(username);
-      paramCount++;
-    }
-    
-    if (email !== undefined) {
-      updateFields.push(`email = $${paramCount}`);
-      updateParams.push(email);
-      paramCount++;
-    }
-    
-    if (phone_number !== undefined) {
-      updateFields.push(`phone_number = $${paramCount}`);
-      updateParams.push(phone_number);
-      paramCount++;
-    }
-    
-    if (full_name !== undefined) {
-      updateFields.push(`full_name = $${paramCount}`);
-      updateParams.push(full_name);
-      paramCount++;
-    }
-    
-    if (address !== undefined) {
-      updateFields.push(`address = $${paramCount}`);
-      updateParams.push(address);
-      paramCount++;
-    }
-    
-    // Always update the updated_at timestamp
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
-    updateParams.push(userId); // Add userId as the last parameter
-    
-    const updateQuery = `
-      UPDATE users SET 
-        ${updateFields.join(', ')}
-      WHERE id = $${paramCount}
-      RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture, updated_at
-    `;
-    
-    console.log('Executing update query:', updateQuery, 'with params:', updateParams);
-    
-    const updatedUser = await client.query(updateQuery, updateParams);
-    
-    if (updatedUser.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
+  
+      if (email || phone_number) {
+        let checkQuery = 'SELECT id FROM users WHERE id != $1 AND (';
+        const checkParams = [userId];
+        const conditions = [];
+  
+        if (email) {
+          conditions.push(`email = $${checkParams.length + 1}`);
+          checkParams.push(email);
+        }
+  
+        if (phone_number) {
+          conditions.push(`phone_number = $${checkParams.length + 1}`);
+          checkParams.push(phone_number);
+        }
+  
+        checkQuery += conditions.join(' OR ') + ')';
+        const existingUser = await client.query(checkQuery, checkParams);
+  
+        if (existingUser.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            success: false,
+            message: 'Email or phone number already exists for another user'
+          });
+        }
+      }
+  
+      const updateFields = [];
+      const updateParams = [];
+      let paramCount = 1;
+  
+      if (username !== undefined) {
+        updateFields.push(`username = $${paramCount++}`);
+        updateParams.push(username);
+      }
+  
+      if (email !== undefined) {
+        updateFields.push(`email = $${paramCount++}`);
+        updateParams.push(email);
+      }
+  
+      if (phone_number !== undefined) {
+        updateFields.push(`phone_number = $${paramCount++}`);
+        updateParams.push(phone_number);
+      }
+  
+      if (full_name !== undefined) {
+        updateFields.push(`full_name = $${paramCount++}`);
+        updateParams.push(full_name);
+      }
+  
+      if (address !== undefined) {
+        updateFields.push(`address = $${paramCount++}`);
+        updateParams.push(address);
+      }
+  
+      updateFields.push('updated_at = CURRENT_TIMESTAMP');
+      updateParams.push(userId); // This goes in the WHERE clause
+  
+      const updateQuery = `
+        UPDATE users SET 
+          ${updateFields.join(', ')}
+        WHERE id = $${paramCount}
+        RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture, updated_at
+      `;
+  
+      const updatedUser = await client.query(updateQuery, updateParams);
+  
+      if (updatedUser.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+  
+      await client.query('COMMIT');
+  
+      return res.status(200).json({
+        success: true,
+        user: updatedUser.rows[0],
+        message: 'Profile updated successfully'
       });
+  
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error updating profile:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error updating profile',
+        error: error.message
+      });
+    } finally {
+      client.release(); // Release client back to pool
     }
-    
-    await client.query('COMMIT'); // Commit the transaction
-    
-    console.log('Profile updated successfully:', updatedUser.rows[0]);
-    
-    return res.status(200).json({
-      success: true,
-      user: updatedUser.rows[0],
-      message: 'Profile updated successfully'
-    });
-    
-  } catch (error) {
-    await client.query('ROLLBACK'); // Rollback on error
-    console.error('Error updating profile:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error updating profile',
-      error: error.message
-    });
-  } finally {
-    client.release(); // Always release the client back to the pool
   }
-}
+  
 
   // ENHANCED: Request password reset with SendGrid email support
   async requestPasswordReset(req, res) {
@@ -965,136 +950,6 @@ async getCurrentUser(req, res) {
   }
 }
 
-// Update user profile with proper error handling and transaction
-async updateProfile(req, res) {
-  const client = await db.getClient(); // Get a database client for transaction
-  
-  try {
-    await client.query('BEGIN'); // Start transaction
-    
-    const userId = req.user.id;
-    const { username, email, phone_number, full_name, address } = req.body;
-    
-    console.log('Updating profile for user:', userId, 'with data:', req.body);
-    
-    // Validate that at least one field is provided
-    if (!username && !email && !phone_number && !full_name && !address) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({
-        success: false,
-        message: 'At least one field must be provided for update'
-      });
-    }
-    
-    // Check if email or phone already exists for another user
-    if (email || phone_number) {
-      let checkQuery = 'SELECT id, email, phone_number FROM users WHERE id != $1 AND (';
-      const checkParams = [userId];
-      const conditions = [];
-      
-      if (email) {
-        conditions.push(`email = $${checkParams.length + 1}`);
-        checkParams.push(email);
-      }
-      
-      if (phone_number) {
-        conditions.push(`phone_number = $${checkParams.length + 1}`);
-        checkParams.push(phone_number);
-      }
-      
-      checkQuery += conditions.join(' OR ') + ')';
-      
-      const existingUser = await client.query(checkQuery, checkParams);
-      
-      if (existingUser.rows.length > 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          success: false,
-          message: 'Email or phone number already exists for another user'
-        });
-      }
-    }
-    
-    // Build dynamic update query
-    const updateFields = [];
-    const updateParams = [];
-    let paramCount = 1;
-    
-    if (username !== undefined) {
-      updateFields.push(`username = $${paramCount}`);
-      updateParams.push(username);
-      paramCount++;
-    }
-    
-    if (email !== undefined) {
-      updateFields.push(`email = $${paramCount}`);
-      updateParams.push(email);
-      paramCount++;
-    }
-    
-    if (phone_number !== undefined) {
-      updateFields.push(`phone_number = $${paramCount}`);
-      updateParams.push(phone_number);
-      paramCount++;
-    }
-    
-    if (full_name !== undefined) {
-      updateFields.push(`full_name = $${paramCount}`);
-      updateParams.push(full_name);
-      paramCount++;
-    }
-    
-    if (address !== undefined) {
-      updateFields.push(`address = $${paramCount}`);
-      updateParams.push(address);
-      paramCount++;
-    }
-    
-    // Always update the updated_at timestamp
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
-    updateParams.push(userId); // Add userId as the last parameter
-    
-    const updateQuery = `
-      UPDATE users SET 
-        ${updateFields.join(', ')}
-      WHERE id = $${paramCount}
-      RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture, updated_at
-    `;
-    
-    console.log('Executing update query:', updateQuery, 'with params:', updateParams);
-    
-    const updatedUser = await client.query(updateQuery, updateParams);
-    
-    if (updatedUser.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-    
-    await client.query('COMMIT'); // Commit the transaction
-    
-    console.log('Profile updated successfully:', updatedUser.rows[0]);
-    
-    return res.status(200).json({
-      success: true,
-      user: updatedUser.rows[0],
-      message: 'Profile updated successfully'
-    });
-    
-  } catch (error) {
-    await client.query('ROLLBACK'); // Rollback on error
-    console.error('Error updating profile:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error updating profile',
-      error: error.message
-    });
-  } finally {
-    client.release(); // Always release the client back to the pool
-  }
-}
 }
 
 module.exports = new AuthController();
