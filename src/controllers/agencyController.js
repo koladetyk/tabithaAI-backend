@@ -5,60 +5,59 @@ const sendTempPasswordEmail = require('../utils/sendTempPasswordEmail'); // opti
 
 // Admin adds agency and contacts
 exports.addAgency = async (req, res) => {
-  const { name, agency_notes, contacts } = req.body;
-
-  if (!name || !contacts || !Array.isArray(contacts)) {
-    return res.status(400).json({ success: false, message: 'Missing required fields' });
-  }
-
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-
-    const agencyResult = await client.query(
-      `INSERT INTO agencies (name, agency_notes) VALUES ($1, $2) RETURNING id`,
-      [name, agency_notes]
-    );
-    const agencyId = agencyResult.rows[0].id;
-
-    for (const contact of contacts) {
-      const { full_name, email, phone_number } = contact;
-
-      const tempPassword = generatePassword();
-      const hashedPassword = await bcrypt.hash(tempPassword, 10);
-
-      const userResult = await client.query(
-        `INSERT INTO users (full_name, email, phone_number, password_hash, is_agency_user)
-         VALUES ($1, $2, $3, $4, true) RETURNING id`,
-        [full_name, email, phone_number, hashedPassword]
-      );
-      
-      const userId = userResult.rows[0].id;
-
-      await client.query(
-        `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
-        [agencyId, userId]
-      );
-
-      try {
-        await sendTempPasswordEmail(email, tempPassword);
-      } catch (emailErr) {
-        console.error(`Failed to send email to ${email}:`, emailErr.message);
-        // You can optionally log this error to DB or alert an admin
-      }
+    const { name, agency_notes, contacts } = req.body;
+  
+    if (!name || !contacts || !Array.isArray(contacts)) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
     }
-
-    await client.query('COMMIT');
-    return res.status(201).json({ success: true, message: 'Agency and contacts added successfully' });
-
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error(err);
-    return res.status(500).json({ success: false, message: 'Server error', error: err.message });
-  } finally {
-    client.release();
-  }
-};
+  
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const agencyResult = await client.query(
+        `INSERT INTO agencies (name, agency_notes) VALUES ($1, $2) RETURNING id`,
+        [name, agency_notes]
+      );
+      const agencyId = agencyResult.rows[0].id;
+  
+      for (const contact of contacts) {
+        const { full_name, email, phone_number } = contact;
+  
+        const tempPassword = generatePassword();
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
+        const userId = uuidv4();  // ✅ Generate a new ID per user
+  
+        const userResult = await client.query(
+          `INSERT INTO users (id, full_name, email, phone_number, password_hash, is_agency_user)
+           VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+          [userId, full_name, email, phone_number, hashedPassword]
+        );
+  
+        await client.query(
+          `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
+          [agencyId, userId]
+        );
+  
+        try {
+          await sendTempPasswordEmail(email, tempPassword);
+        } catch (emailErr) {
+          console.error(`Failed to send email to ${email}:`, emailErr.message);
+        }
+      }
+  
+      await client.query('COMMIT');
+      return res.status(201).json({ success: true, message: 'Agency and contacts added successfully' });
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Server error', error: err.message });
+    } finally {
+      client.release();
+    }
+  };
+  
 
 // Admin updates agency info
 exports.updateAgency = async (req, res) => {
