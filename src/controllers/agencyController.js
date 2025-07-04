@@ -39,8 +39,12 @@ exports.addAgency = async (req, res) => {
         [agencyId, userId]
       );
 
-      // Optional: Send password to email (configure SendGrid)
-      await sendTempPasswordEmail(email, tempPassword); 
+      try {
+        await sendTempPasswordEmail(email, tempPassword);
+      } catch (emailErr) {
+        console.error(`Failed to send email to ${email}:`, emailErr.message);
+        // You can optionally log this error to DB or alert an admin
+      }
     }
 
     await client.query('COMMIT');
