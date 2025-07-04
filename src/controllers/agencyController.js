@@ -28,8 +28,9 @@ exports.addAgency = async (req, res) => {
       const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
       const userResult = await client.query(
-        `INSERT INTO users (full_name, email, phone_number, password, is_agency_user)
-         VALUES ($1, $2, $3, $4, true) RETURNING id`,
+        `INSERT INTO users (full_name, email, phone_number, password_hash, is_agency_user)
+ VALUES ($1, $2, $3, $4, true) RETURNING id`
+
         [full_name, email, phone_number, hashedPassword]
       );
       const userId = userResult.rows[0].id;
