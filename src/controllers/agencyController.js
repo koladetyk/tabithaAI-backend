@@ -24,28 +24,32 @@ exports.addAgency = async (req, res) => {
   
       for (const contact of contacts) {
         const { full_name, email, phone_number } = contact;
-  
+      
         const tempPassword = generatePassword();
         const hashedPassword = await bcrypt.hash(tempPassword, 10);
-        const userId = uuidv4();  // ✅ Generate a new ID per user
-  
+        const userId = uuidv4();
+      
+        // 👇 Generate a username from full_name + 3 random digits
+        const randomDigits = Math.floor(100 + Math.random() * 900); // 100–999
+        const username = full_name.toLowerCase().replace(/\s+/g, '_') + randomDigits;
+      
         const userResult = await client.query(
-          `INSERT INTO users (id, full_name, email, phone_number, password_hash, is_agency_user)
-           VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
-          [userId, full_name, email, phone_number, hashedPassword]
+          `INSERT INTO users (id, username, full_name, email, phone_number, password_hash, is_agency_user)
+           VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id`,
+          [userId, username, full_name, email, phone_number, hashedPassword]
         );
-  
+      
         await client.query(
           `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
           [agencyId, userId]
         );
-  
+      
         try {
           await sendTempPasswordEmail(email, tempPassword);
         } catch (emailErr) {
           console.error(`Failed to send email to ${email}:`, emailErr.message);
         }
-      }
+      }      
   
       await client.query('COMMIT');
       return res.status(201).json({ success: true, message: 'Agency and contacts added successfully' });
