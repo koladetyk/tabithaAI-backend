@@ -1,4 +1,5 @@
 const db = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const generatePassword = require('../utils/generatePassword');
 const sendTempPasswordEmail = require('../utils/sendTempPasswordEmail'); // optional but recommended
