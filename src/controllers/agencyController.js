@@ -11,7 +11,7 @@ exports.addAgency = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  const client = await db.getClient();
+  const client = await db.connect();
   try {
     await client.query('BEGIN');
 
