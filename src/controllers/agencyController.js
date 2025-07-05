@@ -40,10 +40,11 @@ exports.addAgency = async (req, res) => {
         );
 
         await client.query(
-            `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+            `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
              VALUES ($1, $2, $3, $4, $5)`,
             ['ADD', 'AGENCY', agencyId, req.user.id, `Created agency "${name}"`]
           );
+          
           
       
         await client.query(
@@ -125,10 +126,11 @@ exports.addContactPerson = async (req, res) => {
       );
 
       await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+        `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
          VALUES ($1, $2, $3, $4, $5)`,
         ['ADD', 'CONTACT', userId, req.user.id, `Added contact ${email} to agency ${agencyId}`]
       );
+      
       
   
       await client.query(
@@ -170,10 +172,11 @@ exports.addContactPerson = async (req, res) => {
       );
 
       await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+        `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
          VALUES ($1, $2, $3, $4, $5)`,
         ['DELETE', 'CONTACT', userId, req.user.id, `Deleted contact ${userId} from agency ${agencyId}`]
       );
+      
       
   
       await client.query('COMMIT');
@@ -202,10 +205,12 @@ exports.addContactPerson = async (req, res) => {
       await client.query('DELETE FROM agencies WHERE id = $1', [agencyId]);
   
       await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+        `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
          VALUES ($1, $2, $3, $4, $5)`,
         ['DELETE', 'AGENCY', agencyId, req.user.id, `Deleted agency ${agencyId}`]
       );
+      
+      
       
       await client.query('COMMIT');
       
