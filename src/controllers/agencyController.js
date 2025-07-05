@@ -197,16 +197,16 @@ exports.addContactPerson = async (req, res) => {
       await client.query('DELETE FROM agency_contacts WHERE agency_id = $1', [agencyId]);
       await client.query('DELETE FROM agencies WHERE id = $1', [agencyId]);
   
-      await client.query('COMMIT');
-  
-      console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId}`);
-      return res.status(200).json({ success: true, message: 'Agency and contacts deleted' });
-
       await client.query(
         `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
          VALUES ($1, $2, $3, $4, $5)`,
         ['DELETE', 'AGENCY', agencyId, req.user.id, `Deleted agency ${agencyId}`]
       );
+      
+      await client.query('COMMIT');
+      
+      console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId}`);
+      return res.status(200).json({ success: true, message: 'Agency and contacts deleted' });      
       
   
     } catch (err) {
