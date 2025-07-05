@@ -87,10 +87,10 @@ exports.updateAgency = async (req, res) => {
       );
   
       await db.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+        `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
          VALUES ($1, $2, $3, $4, $5)`,
         ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency ${name}`]
-      );
+      );      
   
       return res.status(200).json({ success: true, message: 'Agency updated successfully' });
     } catch (err) {
