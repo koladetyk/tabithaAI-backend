@@ -73,7 +73,7 @@ exports.addAgency = async (req, res) => {
 
 // Admin updates agency info
 exports.updateAgency = async (req, res) => {
-    const agencyId = parseInt(req.params.id);
+    const agencyId = req.params.id;
     const { name, agency_notes } = req.body;
   
     if (isNaN(agencyId)) {
