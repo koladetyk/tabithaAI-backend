@@ -38,6 +38,13 @@ exports.addAgency = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id`,
           [userId, username, full_name, email, phone_number, hashedPassword]
         );
+
+        await client.query(
+            `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+             VALUES ($1, $2, $3, $4, $5)`,
+            ['ADD', 'AGENCY', agencyId, req.user.id, `Created agency "${name}"`]
+          );
+          
       
         await client.query(
           `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
@@ -75,6 +82,13 @@ exports.updateAgency = async (req, res) => {
       [name, agency_notes, agencyId]
     );
 
+    await db.query(
+        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency ${name}`]
+      );
+      
+
     return res.status(200).json({ success: true, message: 'Agency updated successfully' });
   } catch (err) {
     console.error(err);
@@ -82,18 +96,127 @@ exports.updateAgency = async (req, res) => {
   }
 };
 
-// Admin deletes agency
-exports.deleteAgency = async (req, res) => {
-  const agencyId = req.params.id;
+// Add a new contact person to an existing agency
+exports.addContactPerson = async (req, res) => {
+    const agencyId = req.params.id;
+    const { full_name, email, phone_number } = req.body;
+  
+    if (!full_name || !email || !phone_number) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+  
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+  
+      const tempPassword = generatePassword();
+      const hashedPassword = await bcrypt.hash(tempPassword, 10);
+      const userId = uuidv4();
+      const username = `${full_name.split(' ')[0].toLowerCase()}${Math.floor(Math.random() * 900 + 100)}`;
+  
+      await client.query(
+        `INSERT INTO users (id, full_name, username, email, phone_number, password_hash, is_agency_user)
+         VALUES ($1, $2, $3, $4, $5, $6, true)`,
+        [userId, full_name, username, email, phone_number, hashedPassword]
+      );
 
-  try {
-    await db.query('DELETE FROM agencies WHERE id = $1', [agencyId]);
-    return res.status(200).json({ success: true, message: 'Agency deleted' });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: 'Deletion failed', error: err.message });
-  }
-};
+      await client.query(
+        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['ADD', 'CONTACT', userId, req.user.id, `Added contact ${email} to agency ${agencyId}`]
+      );
+      
+  
+      await client.query(
+        `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
+        [agencyId, userId]
+      );
+  
+      await sendTempPasswordEmail(email, tempPassword);
+      await client.query('COMMIT');
+  
+      console.log(`[Admin:${req.user.id}] Added contact ${email} to agency ${agencyId}`);
+      return res.status(201).json({ success: true, message: 'Contact person added' });
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Add contact failed', error: err.message });
+    } finally {
+      client.release();
+    }
+  };
+  
+  // Delete a contact person from an agency (removes mapping + user if agency user)
+  exports.deleteContactPerson = async (req, res) => {
+    const { agencyId, userId } = req.params;
+  
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+  
+      await client.query(
+        `DELETE FROM agency_contacts WHERE agency_id = $1 AND user_id = $2`,
+        [agencyId, userId]
+      );
+  
+      await client.query(
+        `DELETE FROM users WHERE id = $1 AND is_agency_user = true`,
+        [userId]
+      );
+
+      await client.query(
+        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['DELETE', 'CONTACT', userId, req.user.id, `Deleted contact ${userId} from agency ${agencyId}`]
+      );
+      
+  
+      await client.query('COMMIT');
+  
+      console.log(`[Admin:${req.user.id}] Deleted contact ${userId} from agency ${agencyId}`);
+      return res.status(200).json({ success: true, message: 'Contact person deleted' });
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Delete contact failed', error: err.message });
+    } finally {
+      client.release();
+    }
+  };
+  
+  // Update to deleteAgency to include agency_contacts cleanup + logging
+  exports.deleteAgency = async (req, res) => {
+    const agencyId = req.params.id;
+  
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+  
+      await client.query('DELETE FROM agency_contacts WHERE agency_id = $1', [agencyId]);
+      await client.query('DELETE FROM agencies WHERE id = $1', [agencyId]);
+  
+      await client.query('COMMIT');
+  
+      console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId}`);
+      return res.status(200).json({ success: true, message: 'Agency and contacts deleted' });
+
+      await client.query(
+        `INSERT INTO audit_logs (action_type, entity_type, entity_id, performed_by, details)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['DELETE', 'AGENCY', agencyId, req.user.id, `Deleted agency ${agencyId}`]
+      );
+      
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ success: false, message: 'Deletion failed', error: err.message });
+    } finally {
+      client.release();
+    }
+  };  
 
 // View agencies and contact persons
 exports.getAgencies = async (req, res) => {

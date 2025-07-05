@@ -5,8 +5,8 @@ module.exports = async function sendTempPasswordEmail(email, tempPassword) {
   const msg = {
     to: email,
     from: process.env.FROM_EMAIL,
-    subject: 'Your Temporary Login Password',
-    text: `Your temporary password is: ${tempPassword}. Please log in and change it immediately.`,
+    subject: 'Your Login Password for Tabitha',
+    text: `Your password is: ${tempPassword}. You can reset password if you would like to.`,
   };
 
   await sgMail.send(msg);

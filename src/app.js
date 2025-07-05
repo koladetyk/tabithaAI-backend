@@ -21,6 +21,7 @@ const googleAuthRoutes = require('./routes/googleAuthRoutes');
 const referralRoutes = require('./routes/referralRoutes');
 const resourceRoutes = require('./routes/resourceRoutes');
 const agencyRoutes = require('./routes/agencyRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 // Add near the top of your file, after imports
 console.log('Starting application...');
@@ -96,6 +97,7 @@ app.use('/api/v1/auth', googleAuthRoutes);
 app.use('/api/v1', referralRoutes);
 app.use('/api/v1', resourceRoutes);
 app.use('/api/v1/agencies', agencyRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 
 // Root route

@@ -6,32 +6,6 @@ const storageService = require('../services/storageService');
 const evidenceController = require('./evidenceController');
 
 class ReportController {
-  // Get all reports (admin only)
-  async getAllReports(req, res) {
-    try {
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const offset = (page - 1) * limit;
-  
-      const [totalResult, paginatedResult] = await Promise.all([
-        db.query('SELECT COUNT(*) FROM reports'),
-        db.query('SELECT * FROM reports ORDER BY report_date DESC LIMIT $1 OFFSET $2', [limit, offset])
-      ]);
-  
-      const total = parseInt(totalResult.rows[0].count);
-      const totalPages = Math.ceil(total / limit);
-  
-      return res.status(200).json({
-        success: true,
-        data: paginatedResult.rows,
-        pagination: { total, page, totalPages }
-      });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ success: false, message: 'Server error' });
-    }
-  }
-  
   
 
   // Update your getReportById method to include evidence with URLs
