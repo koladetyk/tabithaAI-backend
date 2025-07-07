@@ -1,28 +1,27 @@
-// middleware/roleChecks.js
-
-module.exports = {
-    // Only allow general admins or higher
-    checkAdmin: (req, res, next) => {
-      if (!req.user?.is_admin) {
-        return res.status(403).json({ message: 'Admin access required' });
-      }
-      next();
-    },
-  
-    // Only allow the master admin
-    checkMasterAdmin: (req, res, next) => {
-      if (!req.user?.is_master_admin) {
-        return res.status(403).json({ message: 'Master admin access required' });
-      }
-      next();
-    },
-  
-    // Only allow agency contact users
-    checkAgencyUser: (req, res, next) => {
-      if (!req.user?.is_agency_user) {
-        return res.status(403).json({ message: 'Agency contact access required' });
-      }
-      next();
+function isAdmin(req, res, next) {
+    if (req.user && req.user.is_admin) {
+      return next();
     }
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
+  
+  function isMasterAdmin(req, res, next) {
+    if (req.user && req.user.is_master_admin) {
+      return next();
+    }
+    return res.status(403).json({ success: false, message: 'Master admin access required' });
+  }
+  
+  function isAgencyUser(req, res, next) {
+    if (req.user && req.user.is_agency_user) {
+      return next();
+    }
+    return res.status(403).json({ success: false, message: 'Agency user access required' });
+  }
+  
+  module.exports = {
+    isAdmin,
+    isMasterAdmin,
+    isAgencyUser
   };
   
