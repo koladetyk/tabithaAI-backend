@@ -74,31 +74,42 @@ exports.addAgency = async (req, res) => {
 
 // Admin updates agency info
 exports.updateAgency = async (req, res) => {
-    const agencyId = req.params.id;
-    const { name, agency_notes } = req.body;
-  
-    if (isNaN(agencyId)) {
-      return res.status(400).json({ success: false, message: 'Invalid agency ID' });
+  const agencyId = parseInt(req.params.id);
+  const { name, agency_notes } = req.body;
+
+  if (isNaN(agencyId)) {
+    return res.status(400).json({ success: false, message: 'Invalid agency ID' });
+  }
+
+  try {
+    // Check if agency exists
+    const agencyCheck = await db.query('SELECT id FROM agencies WHERE id = $1', [agencyId]);
+
+    if (agencyCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Agency not found' });
     }
-  
-    try {
-      await db.query(
-        'UPDATE agencies SET name = $1, agency_notes = $2, day_added = CURRENT_DATE WHERE id = $3',
-        [name, agency_notes, agencyId]
-      );
-  
-      await db.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
-         VALUES ($1, $2, $3, $4, $5)`,
-        ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency ${name}`]
-      );      
-  
-      return res.status(200).json({ success: true, message: 'Agency updated successfully' });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ success: false, message: 'Update failed', error: err.message });
-    }
-  };
+
+    // Perform update
+    await db.query(
+      'UPDATE agencies SET name = $1, agency_notes = $2, day_added = CURRENT_DATE WHERE id = $3',
+      [name, agency_notes, agencyId]
+    );
+
+    // Log audit trail
+    await db.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency ${name}`]
+    );
+
+    return res.status(200).json({ success: true, message: 'Agency updated successfully' });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: 'Update failed', error: err.message });
+  }
+};
+
   
 
 // Add a new contact person to an existing agency
