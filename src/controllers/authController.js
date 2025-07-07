@@ -277,7 +277,7 @@ async register(req, res) {
       
       return res.status(200).json({
         success: true,
-        token: token, // Add this line - return the token
+        token: token,
         user: {
           id: user.rows[0].id,
           username: user.rows[0].username,
@@ -285,9 +285,11 @@ async register(req, res) {
           phone_number: user.rows[0].phone_number,
           full_name: user.rows[0].full_name,
           is_admin: user.rows[0].is_admin,
+          is_agency_user: user.rows[0].is_agency_user,  // <-- added this line
           profile_picture: user.rows[0].profile_picture
         }
       });
+      
     } catch (error) {
       console.error('Error logging in:', error);
       return res.status(500).json({
