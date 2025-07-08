@@ -17,7 +17,7 @@ exports.getAuditLogs = async (req, res) => {
   
 // Promote user to admin
 exports.promoteToAdmin = async (req, res) => {
-  const targetUserId = parseInt(req.params.id);
+  const targetUserId = req.params.id;
 
   if (!req.user.is_admin) {
     return res.status(403).json({ message: 'Only admins can promote users' });
@@ -41,7 +41,7 @@ exports.promoteToAdmin = async (req, res) => {
 
 // Demote admin (only by master admin)
 exports.demoteAdmin = async (req, res) => {
-  const targetUserId = parseInt(req.params.id);
+  const targetUserId = req.params.id;
 
   if (!req.user.is_master_admin) {
     return res.status(403).json({ message: 'Only the master admin can demote admins' });
