@@ -88,3 +88,25 @@ exports.demoteAdmin = async (req, res) => {
   }
 };
 
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const [userResult, reportResult, pendingResult, completedResult] = await Promise.all([
+      db.query('SELECT COUNT(*) FROM users'),
+      db.query('SELECT COUNT(*) FROM reports'),
+      db.query("SELECT COUNT(*) FROM reports WHERE status = 'pending'"),
+      db.query("SELECT COUNT(*) FROM reports WHERE status = 'completed'")
+    ]);
+
+    return res.status(200).json({
+      totalUsers: parseInt(userResult.rows[0].count, 10),
+      totalReports: parseInt(reportResult.rows[0].count, 10),
+      pendingReports: parseInt(pendingResult.rows[0].count, 10),
+      completedReports: parseInt(completedResult.rows[0].count, 10)
+    });
+  } catch (err) {
+    console.error('Dashboard stats error:', err);
+    return res.status(500).json({ message: 'Failed to fetch dashboard stats' });
+  }
+};
+
+

@@ -13,4 +13,7 @@ router.post('/promote/:id', isAuthenticated, isAdmin, adminController.promoteToA
 // Route: Demote admin — only master admin can do this
 router.post('/demote/:id', isAuthenticated, isMasterAdmin, adminController.demoteAdmin);
 
+router.get('/dashboard-stats', isAuthenticated, isAdmin, adminController.getDashboardStats);
+
+
 module.exports = router;
