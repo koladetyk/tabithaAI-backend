@@ -1,3 +1,5 @@
+const db = require('../db'); // ✅ Ensure this is added
+
 exports.getAuditLogs = async (req, res) => {
     try {
       const logs = await db.query(`
