@@ -285,9 +285,10 @@ async register(req, res) {
           phone_number: user.rows[0].phone_number,
           full_name: user.rows[0].full_name,
           is_admin: user.rows[0].is_admin,
-          is_agency_user: user.rows[0].is_agency_user,  // <-- added this line
+          is_master_admin: user.rows[0].is_master_admin,  // ✅ Add this
+          is_agency_user: user.rows[0].is_agency_user,
           profile_picture: user.rows[0].profile_picture
-        }
+        }        
       });
       
     } catch (error) {
@@ -336,6 +337,7 @@ async register(req, res) {
           id: user.id,
           email: user.email,
           is_admin: true // ✅ frontend can now detect admin
+          //is_master_admin: user.is_master_admin  // ✅ Add this
         }
       });
     } catch (error) {
@@ -464,8 +466,10 @@ async register(req, res) {
           profile_picture: user.rows[0].profile_picture,
           username: user.rows[0].username,
           phone_number: user.rows[0].phone_number,
-          is_admin: user.rows[0].is_admin
+          is_admin: user.rows[0].is_admin,
+          is_master_admin: user.rows[0].is_master_admin  // ✅ Add this
         }
+        
       });
     } catch (error) {
       console.error('Error handling Google callback:', error);
@@ -920,6 +924,7 @@ async getCurrentUser(req, res) {
         full_name, 
         address,
         is_admin, 
+        is_master_admin,
         profile_picture, 
         google_id,
         created_at,
