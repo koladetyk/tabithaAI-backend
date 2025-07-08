@@ -5,6 +5,17 @@ const db = require('../config/database');
 const storageService = require('../services/storageService');
 
 class EvidenceController {
+  constructor() {
+    this.generateEvidenceUrls = this.generateEvidenceUrls.bind(this);
+    this.categorizeEvidence = this.categorizeEvidence.bind(this);
+    this.getEvidenceForReport = this.getEvidenceForReport.bind(this);
+    this.getEvidenceById = this.getEvidenceById.bind(this);
+    this.getEvidenceForReportDetails = this.getEvidenceForReportDetails.bind(this);
+    this.addEvidence = this.addEvidence.bind(this);
+    this.deleteEvidence = this.deleteEvidence.bind(this);
+    this.getEvidenceSignedUrl = this.getEvidenceSignedUrl.bind(this);
+    this.updateEvidenceDescription = this.updateEvidenceDescription.bind(this);
+  }
   // Helper method to generate signed URLs for evidence
   // Inside EvidenceController class
 async generateEvidenceUrls(evidenceItems, maxRetries = 3) {
