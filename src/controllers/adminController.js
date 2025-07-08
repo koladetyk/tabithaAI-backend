@@ -1,4 +1,4 @@
-const db = require('../db'); // ✅ Ensure this is added
+const db = require('../config/database');
 
 exports.getAuditLogs = async (req, res) => {
     try {
