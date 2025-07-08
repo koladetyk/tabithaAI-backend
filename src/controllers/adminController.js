@@ -24,13 +24,23 @@ exports.promoteToAdmin = async (req, res) => {
   }
 
   try {
+    const { rows } = await db.query('SELECT is_admin FROM users WHERE id = $1', [targetUserId]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (rows[0].is_admin) {
+      return res.status(400).json({ message: 'User is already an admin' });
+    }
+
     await db.query('UPDATE users SET is_admin = true WHERE id = $1', [targetUserId]);
 
     await db.query(
       `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
       ['PROMOTE', 'USER', targetUserId, req.user.id, `Promoted user ${targetUserId} to admin`]
-    );    
+    );
 
     return res.status(200).json({ message: 'User promoted to admin' });
   } catch (err) {
@@ -39,18 +49,28 @@ exports.promoteToAdmin = async (req, res) => {
   }
 };
 
+
 // Demote admin (only by master admin)
 exports.demoteAdmin = async (req, res) => {
   const targetUserId = req.params.id;
-
 
   if (!req.user.is_master_admin) {
     return res.status(403).json({ message: 'Only the master admin can demote admins' });
   }
 
+  if (req.user.id === targetUserId) {
+    return res.status(400).json({ message: 'Master admin cannot demote themselves' });
+  }
+
   try {
-    if (req.user.id === targetUserId) {
-      return res.status(400).json({ message: 'Master admin cannot demote themselves' });
+    const { rows } = await db.query('SELECT is_admin FROM users WHERE id = $1', [targetUserId]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!rows[0].is_admin) {
+      return res.status(400).json({ message: 'User is not an admin' });
     }
 
     await db.query('UPDATE users SET is_admin = false WHERE id = $1', [targetUserId]);
@@ -67,3 +87,4 @@ exports.demoteAdmin = async (req, res) => {
     return res.status(500).json({ message: 'Failed to demote admin' });
   }
 };
+
