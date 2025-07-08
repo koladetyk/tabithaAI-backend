@@ -27,10 +27,10 @@ exports.promoteToAdmin = async (req, res) => {
     await db.query('UPDATE users SET is_admin = true WHERE id = $1', [targetUserId]);
 
     await db.query(
-      `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
+      `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
       ['PROMOTE', 'USER', targetUserId, req.user.id, `Promoted user ${targetUserId} to admin`]
-    );
+    );    
 
     return res.status(200).json({ message: 'User promoted to admin' });
   } catch (err) {
@@ -42,6 +42,7 @@ exports.promoteToAdmin = async (req, res) => {
 // Demote admin (only by master admin)
 exports.demoteAdmin = async (req, res) => {
   const targetUserId = req.params.id;
+
 
   if (!req.user.is_master_admin) {
     return res.status(403).json({ message: 'Only the master admin can demote admins' });
@@ -55,7 +56,7 @@ exports.demoteAdmin = async (req, res) => {
     await db.query('UPDATE users SET is_admin = false WHERE id = $1', [targetUserId]);
 
     await db.query(
-      `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
+      `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
       ['DEMOTE', 'USER', targetUserId, req.user.id, `Demoted admin ${targetUserId} to regular user`]
     );
