@@ -6,33 +6,36 @@ const storageService = require('../services/storageService');
 
 class EvidenceController {
   // Helper method to generate signed URLs for evidence
-  async generateEvidenceUrls(evidenceItems) {
-    const evidenceWithUrls = [];
-    
-    for (const evidence of evidenceItems) {
+  // Inside EvidenceController class
+async generateEvidenceUrls(evidenceItems, maxRetries = 3) {
+  const evidenceWithUrls = [];
+
+  for (const evidence of evidenceItems) {
+    let attempt = 0;
+    let signedUrl = null;
+
+    while (attempt < maxRetries) {
       try {
-        // Generate signed URL for each evidence item
-        const signedUrl = await storageService.getSignedUrl(evidence.file_url, 60); // 60 minutes validity
-        
-        evidenceWithUrls.push({
-          ...evidence,
-          viewUrl: signedUrl,
-          downloadUrl: signedUrl // Same URL can be used for both viewing and downloading
-        });
+        signedUrl = await storageService.getSignedUrl(evidence.file_url, 5); // 5-minute validity
+        break; // success, exit retry loop
       } catch (error) {
-        console.error(`Error generating signed URL for evidence ${evidence.id}:`, error);
-        // Include evidence without URL if signing fails
-        evidenceWithUrls.push({
-          ...evidence,
-          viewUrl: null,
-          downloadUrl: null,
-          error: 'Unable to generate access URL'
-        });
+        attempt++;
+        console.warn(`Retry ${attempt}/${maxRetries} for ${evidence.id}:`, error.message);
+        await new Promise(resolve => setTimeout(resolve, 300 * attempt)); // Backoff
       }
     }
-    
-    return evidenceWithUrls;
+
+    evidenceWithUrls.push({
+      ...evidence,
+      viewUrl: signedUrl,
+      downloadUrl: signedUrl,
+      error: signedUrl ? null : 'Unable to generate signed URL'
+    });
   }
+
+  return evidenceWithUrls;
+}
+
 
   // Helper method to categorize evidence by type
   categorizeEvidence(evidenceItems) {
@@ -72,17 +75,11 @@ class EvidenceController {
   
       const report = await db.query('SELECT * FROM reports WHERE id = $1', [reportId]);
       if (report.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
+        return res.status(404).json({ success: false, message: 'Report not found' });
       }
   
       if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to view this report\'s evidence'
-        });
+        return res.status(403).json({ success: false, message: 'Access denied' });
       }
   
       const evidence = await db.query(
@@ -90,20 +87,25 @@ class EvidenceController {
         [reportId]
       );
   
-      const evidenceWithUrls = evidence.rows; // No URL transformation
+      const evidenceWithUrls = await this.generateEvidenceUrls(evidence.rows);
+  
+      if (categorize === 'true') {
+        const categorized = this.categorizeEvidence(evidenceWithUrls);
+        return res.status(200).json({
+          success: true,
+          data: categorized
+        });
+      }
   
       return res.status(200).json({
         success: true,
         count: evidenceWithUrls.length,
         data: evidenceWithUrls
       });
+  
     } catch (error) {
       console.error('Error fetching evidence:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error fetching evidence',
-        error: error.message
-      });
+      return res.status(500).json({ success: false, message: 'Server error', error: error.message });
     }
   }  
 
@@ -125,20 +127,15 @@ async getEvidenceById(req, res) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    return res.status(200).json({
-      success: true,
-      data: evidence.rows[0]
-    });
+    const [withUrl] = await this.generateEvidenceUrls([evidence.rows[0]]);
+    return res.status(200).json({ success: true, data: withUrl });
 
   } catch (error) {
     console.error('Error fetching evidence:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error fetching evidence',
-      error: error.message
-    });
+    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 }
+
 
 // getEvidenceForReportDetails - simplified
 async getEvidenceForReportDetails(reportId, userId, isAdmin = false) {
@@ -148,7 +145,7 @@ async getEvidenceForReportDetails(reportId, userId, isAdmin = false) {
       [reportId]
     );
 
-    const evidenceWithUrls = evidence.rows; // no transformation
+    const evidenceWithUrls = await this.generateEvidenceUrls(evidence.rows);
     const categorizedEvidence = this.categorizeEvidence(evidenceWithUrls);
 
     return {
