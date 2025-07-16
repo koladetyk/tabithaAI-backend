@@ -13,6 +13,11 @@ router.post('/:id/contacts', isAuthenticated, isAdmin, agencyController.addConta
 // Delete a specific contact from an agency
 router.delete('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyController.deleteContactPerson);
 
+router.get('/:id', isAuthenticated, isAdmin, agencyController.getAgencyById);
+
+router.patch('/agencies/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
+
+
 
 
 module.exports = router;
