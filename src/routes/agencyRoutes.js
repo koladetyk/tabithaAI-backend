@@ -15,7 +15,9 @@ router.delete('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyCon
 
 router.get('/:id', isAuthenticated, isAdmin, agencyController.getAgencyById);
 
-router.patch('/agencies/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
+// FIX: remove `/agencies` prefix inside the path
+router.patch('/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
+
 
 
 
