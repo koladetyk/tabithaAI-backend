@@ -6,7 +6,7 @@ const sendTempPasswordEmail = require('../utils/sendTempPasswordEmail'); // opti
 
 // Admin adds agency and contacts
 exports.addAgency = async (req, res) => {
-  const { name, agency_notes, contacts } = req.body;
+  const { name, agency_notes, contacts, address } = req.body;
 
   if (!name || !contacts || !Array.isArray(contacts)) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -18,9 +18,9 @@ exports.addAgency = async (req, res) => {
 
     // Include status and updated_at explicitly
     const agencyResult = await client.query(
-      `INSERT INTO agencies (name, agency_notes, status, updated_at)
-       VALUES ($1, $2, 'Active', CURRENT_DATE) RETURNING id`,
-      [name, agency_notes]
+      `INSERT INTO agencies (name, agency_notes, address, status, updated_at)
+       VALUES ($1, $2, $3, 'Active', CURRENT_DATE) RETURNING id`,
+      [name, agency_notes, address]
     );
     const agencyId = agencyResult.rows[0].id;
 
@@ -75,7 +75,7 @@ exports.addAgency = async (req, res) => {
 // Admin updates agency info
 exports.updateAgency = async (req, res) => {
   const agencyId = parseInt(req.params.id);
-  const { name, agency_notes } = req.body;
+  const { name, agency_notes, address } = req.body;
 
   if (isNaN(agencyId)) {
     return res.status(400).json({ success: false, message: 'Invalid agency ID' });
@@ -91,9 +91,9 @@ exports.updateAgency = async (req, res) => {
 
     // Perform update
     await db.query(
-      'UPDATE agencies SET name = $1, agency_notes = $2, updated_at = CURRENT_DATE WHERE id = $3',
-      [name, agency_notes, agencyId]
-    );    
+      'UPDATE agencies SET name = $1, agency_notes = $2, address = $3, updated_at = CURRENT_DATE WHERE id = $4',
+      [name, agency_notes, address, agencyId]
+    );  
 
     // Log audit trail
     await db.query(
