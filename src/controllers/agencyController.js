@@ -331,7 +331,7 @@ exports.toggleAgencyStatus = async (req, res) => {
 };
 
 // GET /agencies/:id/report-summary
-exports.getAgencyReportSummaryById = async (req, res) => {
+exports.getSingleAgencyReportSummary = async (req, res) => {
   const agencyId = req.params.id;
 
   try {
@@ -340,9 +340,9 @@ exports.getAgencyReportSummaryById = async (req, res) => {
         a.id AS agency_id,
         a.name AS agency_name,
         COUNT(r.id) AS number_of_reports,
-        MAX(r.date_submitted) AS last_report_date,
+        MAX(r.referral_date) AS last_report_date,
         (
-          SELECT r2.status
+          SELECT r2.referral_status
           FROM referrals r2
           WHERE r2.agency_id = a.id
           ORDER BY r2.referral_date DESC
@@ -355,16 +355,13 @@ exports.getAgencyReportSummaryById = async (req, res) => {
       ORDER BY a.id;
     `, [agencyId]);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Agency not found' });
-    }
-
     res.status(200).json({ success: true, summary: result.rows[0] });
   } catch (err) {
-    console.error('Error fetching agency summary:', err);
+    console.error('Error fetching single agency summary:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
   }
 };
+
 
 
 // GET /agencies/:id/referred-reports
