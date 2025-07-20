@@ -329,3 +329,60 @@ exports.toggleAgencyStatus = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to update status', error: err.message });
   }
 };
+
+// GET /agencies/report-summary
+exports.getAgencyReportSummaries = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        a.id AS agency_id,
+        a.name AS agency_name,
+        COUNT(r.id) AS number_of_reports,
+        MAX(r.date_submitted) AS last_report_date,
+        (
+          SELECT r2.status
+          FROM referrals r2
+          WHERE r2.agency_id = a.id
+          ORDER BY r2.date_submitted DESC
+          LIMIT 1
+        ) AS current_status
+      FROM agencies a
+      LEFT JOIN referrals r ON r.agency_id = a.id
+      GROUP BY a.id
+      ORDER BY a.id;
+    `);
+
+    res.status(200).json({ success: true, summaries: result.rows });
+  } catch (err) {
+    console.error('Error fetching report summaries:', err);
+    res.status(500).json({ success: false, message: 'Server error', error: err.message });
+  }
+};
+
+// GET /agencies/:id/referred-reports
+exports.getReferredReportsForAgency = async (req, res) => {
+  const agencyId = req.params.id;
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM referrals
+       WHERE agency_id = $1
+       ORDER BY referral_date DESC`,
+      [agencyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      reports: result.rows,
+    });
+
+  } catch (err) {
+    console.error('Error fetching referred reports:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Error retrieving referred reports',
+      error: err.message,
+    });
+  }
+};
+

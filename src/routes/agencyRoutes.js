@@ -3,23 +3,34 @@ const router = express.Router();
 const agencyController = require('../controllers/agencyController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
 
+// Create a new agency
 router.post('/', isAuthenticated, isAdmin, agencyController.addAgency);
+
+// Update agency details
 router.put('/:id', isAuthenticated, isAdmin, agencyController.updateAgency);
+
+// Delete an agency
 router.delete('/:id', isAuthenticated, isAdmin, agencyController.deleteAgency);
+
+// Get all agencies with contacts
 router.get('/', isAuthenticated, isAdmin, agencyController.getAgencies);
-// Add a contact to an existing agency
+
+// Get a single agency by ID
+router.get('/:id', isAuthenticated, isAdmin, agencyController.getAgencyById);
+
+// Toggle status (Active/Inactive)
+router.patch('/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
+
+// Add a contact person to an agency
 router.post('/:id/contacts', isAuthenticated, isAdmin, agencyController.addContactPerson);
 
 // Delete a specific contact from an agency
 router.delete('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyController.deleteContactPerson);
 
-router.get('/:id', isAuthenticated, isAdmin, agencyController.getAgencyById);
+// ✅ NEW: Get summary info for all agencies (number of reports, last report, status)
+router.get('/report-summary', isAuthenticated, isAdmin, agencyController.getAgencyReportSummaries);
 
-// FIX: remove `/agencies` prefix inside the path
-router.patch('/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
-
-
-
-
+// ✅ NEW: Get reports referred to a specific agency
+router.get('/:id/referred-reports', isAuthenticated, isAdmin, agencyController.getReferredReportsForAgency);
 
 module.exports = router;
