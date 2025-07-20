@@ -27,8 +27,8 @@ router.post('/:id/contacts', isAuthenticated, isAdmin, agencyController.addConta
 // Delete a specific contact from an agency
 router.delete('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyController.deleteContactPerson);
 
-// ✅ NEW: Get summary info for all agencies (number of reports, last report, status)
-router.get('/report-summary', isAuthenticated, isAdmin, agencyController.getAgencyReportSummaries);
+// NEW: Get summary info for a specific agency
+router.get('/:id/report-summary', isAuthenticated, isAdmin, agencyController.getAgencyReportSummaryById);
 
 // ✅ NEW: Get reports referred to a specific agency
 router.get('/:id/referred-reports', isAuthenticated, isAdmin, agencyController.getReferredReportsForAgency);
