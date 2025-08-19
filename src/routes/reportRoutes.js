@@ -20,14 +20,17 @@ router.get('/lookup', reportController.getReportsByContact);
 // Get reports by user ID
 router.get('/user/:userId', isAuthenticated, reportController.getReportsByUserId);
 
+// Get Dashboard stats
+router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboardStats);
+
+// NEW: Get latest 100 reports - MOVED BEFORE /:id route
+router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
+
 // Reanalyze a report with enhanced AI
 router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport);
 
-// Get individual report by ID
+// Get individual report by ID - MOVED AFTER specific routes
 router.get('/:id', isAuthenticated, reportController.getReportById);
-
-// Get Dashboard stats 
-router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboardStats);
 
 // ENHANCED: Create new report with array structure support
 // Supports: audio_files[], images_videos[], note, email, phoneNumber, address
@@ -53,7 +56,5 @@ router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 // ENHANCED: Guest report creation with array structure support
 // No authentication required - perfect for anonymous reporting
 router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
-
-router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
 
 module.exports = router;
