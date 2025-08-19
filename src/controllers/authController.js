@@ -192,8 +192,7 @@ async register(req, res) {
   }
 }
   
-  // Login user with email OR phone number
-  // Login user with email OR phone number
+  // Login user with email OR phone number - WITH AGENCY INFO
   async login(req, res) {
     try {
       console.log('Login request received:', {
@@ -258,6 +257,21 @@ async register(req, res) {
         [user.rows[0].id]
       );
       
+      // Get agency information for the user
+      const agencyInfo = await db.query(
+        `SELECT 
+          ac.agency_id,
+          a.name as agency_name,
+          a.agency_notes,
+          a.status as agency_status,
+          a.address as agency_address,
+          ac.created_at as agency_contact_created
+        FROM agency_contacts ac
+        JOIN agencies a ON ac.agency_id = a.id
+        WHERE ac.user_id = $1`,
+        [user.rows[0].id]
+      );
+      
       // Generate JWT token
       const token = jwt.sign(
         { id: user.rows[0].id },
@@ -276,20 +290,32 @@ async register(req, res) {
       
       console.log('Login successful - cookie set');
       
-      // REMOVED: token from response - now using cookies only
+      // Prepare user object with agency information
+      const userResponse = {
+        id: user.rows[0].id,
+        username: user.rows[0].username,
+        email: user.rows[0].email,
+        phone_number: user.rows[0].phone_number,
+        full_name: user.rows[0].full_name,
+        is_admin: user.rows[0].is_admin,
+        is_master_admin: user.rows[0].is_master_admin,
+        is_agency_user: user.rows[0].is_agency_user,
+        profile_picture: user.rows[0].profile_picture,
+        // Add agency information
+        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+        agency_info: agencyInfo.rows.length > 0 ? {
+          id: agencyInfo.rows[0].agency_id,
+          name: agencyInfo.rows[0].agency_name,
+          notes: agencyInfo.rows[0].agency_notes,
+          status: agencyInfo.rows[0].agency_status,
+          address: agencyInfo.rows[0].agency_address,
+          contact_created_at: agencyInfo.rows[0].agency_contact_created
+        } : null
+      };
+      
       return res.status(200).json({
         success: true,
-        user: {
-          id: user.rows[0].id,
-          username: user.rows[0].username,
-          email: user.rows[0].email,
-          phone_number: user.rows[0].phone_number,
-          full_name: user.rows[0].full_name,
-          is_admin: user.rows[0].is_admin,
-          is_master_admin: user.rows[0].is_master_admin,
-          is_agency_user: user.rows[0].is_agency_user,
-          profile_picture: user.rows[0].profile_picture
-        }        
+        user: userResponse
       });
       
     } catch (error) {
@@ -316,6 +342,21 @@ async register(req, res) {
         return res.status(401).json({ success: false, message: 'Invalid credentials' });
       }
   
+      // Get agency information for admin user
+      const agencyInfo = await db.query(
+        `SELECT 
+          ac.agency_id,
+          a.name as agency_name,
+          a.agency_notes,
+          a.status as agency_status,
+          a.address as agency_address,
+          ac.created_at as agency_contact_created
+        FROM agency_contacts ac
+        JOIN agencies a ON ac.agency_id = a.id
+        WHERE ac.user_id = $1`,
+        [user.id]
+      );
+  
       const token = jwt.sign(
         { id: user.id },
         process.env.JWT_SECRET,
@@ -331,17 +372,29 @@ async register(req, res) {
         path: '/'
       });
   
-      // REMOVED: token from response - now using cookies only
+      // Prepare admin user response with agency info
+      const userResponse = {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        full_name: user.full_name,
+        is_admin: true,
+        is_master_admin: user.is_master_admin,
+        // Add agency information
+        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+        agency_info: agencyInfo.rows.length > 0 ? {
+          id: agencyInfo.rows[0].agency_id,
+          name: agencyInfo.rows[0].agency_name,
+          notes: agencyInfo.rows[0].agency_notes,
+          status: agencyInfo.rows[0].agency_status,
+          address: agencyInfo.rows[0].agency_address,
+          contact_created_at: agencyInfo.rows[0].agency_contact_created
+        } : null
+      };
+  
       return res.status(200).json({
         success: true,
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          full_name: user.full_name,
-          is_admin: true,
-          is_master_admin: user.is_master_admin
-        }
+        user: userResponse
       });
     } catch (error) {
       console.error('Error in adminLogin:', error);
@@ -349,7 +402,7 @@ async register(req, res) {
     }
   }
 
-  // Enhanced Google OAuth callback handler
+  // Enhanced Google OAuth callback handler - WITH AGENCY INFO
   async handleGoogleCallback(req, res) {
     try {
       console.log('Google OAuth callback received:', req.body);
@@ -439,6 +492,21 @@ async register(req, res) {
         console.log('Google user login:', user.rows[0].id);
       }
       
+      // Get agency information for the user
+      const agencyInfo = await db.query(
+        `SELECT 
+          ac.agency_id,
+          a.name as agency_name,
+          a.agency_notes,
+          a.status as agency_status,
+          a.address as agency_address,
+          ac.created_at as agency_contact_created
+        FROM agency_contacts ac
+        JOIN agencies a ON ac.agency_id = a.id
+        WHERE ac.user_id = $1`,
+        [user.rows[0].id]
+      );
+      
       // Generate JWT token
       const jwtToken = jwt.sign(
         { id: user.rows[0].id },
@@ -457,20 +525,32 @@ async register(req, res) {
       
       console.log('Google OAuth successful - cookie set');
       
-      // REMOVED: token from response - now using cookies only
+      // Prepare user response with agency information
+      const userResponse = {
+        id: user.rows[0].id,
+        email: user.rows[0].email,
+        full_name: user.rows[0].full_name,
+        profile_picture: user.rows[0].profile_picture,
+        username: user.rows[0].username,
+        phone_number: user.rows[0].phone_number,
+        is_admin: user.rows[0].is_admin,
+        is_master_admin: user.rows[0].is_master_admin,
+        // Add agency information
+        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+        agency_info: agencyInfo.rows.length > 0 ? {
+          id: agencyInfo.rows[0].agency_id,
+          name: agencyInfo.rows[0].agency_name,
+          notes: agencyInfo.rows[0].agency_notes,
+          status: agencyInfo.rows[0].agency_status,
+          address: agencyInfo.rows[0].agency_address,
+          contact_created_at: agencyInfo.rows[0].agency_contact_created
+        } : null
+      };
+      
       return res.status(200).json({
         success: true,
         message: 'Google authentication successful',
-        user: {
-          id: user.rows[0].id,
-          email: user.rows[0].email,
-          full_name: user.rows[0].full_name,
-          profile_picture: user.rows[0].profile_picture,
-          username: user.rows[0].username,
-          phone_number: user.rows[0].phone_number,
-          is_admin: user.rows[0].is_admin,
-          is_master_admin: user.rows[0].is_master_admin
-        }
+        user: userResponse
       });
     } catch (error) {
       console.error('Error handling Google callback:', error);
@@ -910,53 +990,82 @@ async register(req, res) {
     }
   }
   
-  // Get current user
-  // Get current user with all profile fields including address
-async getCurrentUser(req, res) {
-  try {
-    console.log('Get current user request received for user ID:', req.user.id);
-    
-    const user = await db.query(
-      `SELECT 
-        id, 
-        username, 
-        email, 
-        phone_number, 
-        full_name, 
-        address,
-        is_admin, 
-        is_master_admin,
-        profile_picture, 
-        google_id,
-        created_at,
-        updated_at
-      FROM users 
-      WHERE id = $1`,
-      [req.user.id]
-    );
-    
-    if (user.rows.length === 0) {
-      return res.status(404).json({
+  // Get current user with all profile fields including agency info
+  async getCurrentUser(req, res) {
+    try {
+      console.log('Get current user request received for user ID:', req.user.id);
+      
+      const user = await db.query(
+        `SELECT 
+          id, 
+          username, 
+          email, 
+          phone_number, 
+          full_name, 
+          address,
+          is_admin, 
+          is_master_admin,
+          profile_picture, 
+          google_id,
+          created_at,
+          updated_at
+        FROM users 
+        WHERE id = $1`,
+        [req.user.id]
+      );
+      
+      if (user.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+      
+      // Get agency information for the user
+      const agencyInfo = await db.query(
+        `SELECT 
+          ac.agency_id,
+          a.name as agency_name,
+          a.agency_notes,
+          a.status as agency_status,
+          a.address as agency_address,
+          ac.created_at as agency_contact_created
+        FROM agency_contacts ac
+        JOIN agencies a ON ac.agency_id = a.id
+        WHERE ac.user_id = $1`,
+        [req.user.id]
+      );
+      
+      console.log('User data retrieved:', user.rows[0]);
+      
+      // Prepare user response with agency information
+      const userResponse = {
+        ...user.rows[0],
+        // Add agency information
+        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+        agency_info: agencyInfo.rows.length > 0 ? {
+          id: agencyInfo.rows[0].agency_id,
+          name: agencyInfo.rows[0].agency_name,
+          notes: agencyInfo.rows[0].agency_notes,
+          status: agencyInfo.rows[0].agency_status,
+          address: agencyInfo.rows[0].agency_address,
+          contact_created_at: agencyInfo.rows[0].agency_contact_created
+        } : null
+      };
+      
+      return res.status(200).json({
+        success: true,
+        user: userResponse
+      });
+    } catch (error) {
+      console.error('Error getting user:', error);
+      return res.status(500).json({
         success: false,
-        message: 'User not found'
+        message: 'Server error getting user',
+        error: error.message
       });
     }
-    
-    console.log('User data retrieved:', user.rows[0]);
-    
-    return res.status(200).json({
-      success: true,
-      user: user.rows[0]
-    });
-  } catch (error) {
-    console.error('Error getting user:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error getting user',
-      error: error.message
-    });
   }
-}
 
 }
 
