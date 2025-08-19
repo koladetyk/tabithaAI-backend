@@ -30,6 +30,9 @@ router.delete('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyCon
 // NEW: Get summary info for a specific agency
 router.get('/:id/report-summary', isAuthenticated, isAdmin, agencyController.getSingleAgencyReportSummary);
 
+// Add this route BEFORE any parameterized routes like /:id
+router.get('/collective-summary', isAuthenticated, isAdmin, agencyController.getCollectiveAgencySummary);
+
 // ✅ NEW: Get reports referred to a specific agency
 router.get('/:id/referred-reports', isAuthenticated, isAdmin, agencyController.getReferredReportsForAgency);
 

@@ -422,6 +422,93 @@ exports.getSingleAgencyReportSummary = async (req, res) => {
   }
 };
 
+// GET /agencies/collective-summary - Overall statistics across all agencies
+exports.getCollectiveAgencySummary = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        -- Total number of agencies
+        (SELECT COUNT(*) FROM agencies) AS total_agencies,
+        
+        -- Number of active agencies
+        (SELECT COUNT(*) FROM agencies WHERE status = 'Active') AS active_agencies,
+        
+        -- Number of inactive agencies
+        (SELECT COUNT(*) FROM agencies WHERE status = 'Inactive') AS inactive_agencies,
+        
+        -- Total number of reports assigned to agencies
+        (SELECT COUNT(*) FROM referrals) AS total_assigned_reports,
+        
+        -- Number of processed reports (assuming 'completed' or 'resolved' status)
+        (SELECT COUNT(*) FROM referrals WHERE referral_status IN ('completed', 'resolved', 'closed')) AS processed_reports,
+        
+        -- Number of pending reports
+        (SELECT COUNT(*) FROM referrals WHERE referral_status IN ('pending', 'in_progress', 'under_review')) AS pending_reports,
+        
+        -- Total agency contacts/users
+        (SELECT COUNT(*) FROM agency_contacts) AS total_agency_contacts,
+        
+        -- Average reports per agency
+        CASE 
+          WHEN (SELECT COUNT(*) FROM agencies) > 0 
+          THEN ROUND((SELECT COUNT(*) FROM referrals)::decimal / (SELECT COUNT(*) FROM agencies), 2)
+          ELSE 0 
+        END AS avg_reports_per_agency,
+        
+        -- Most recent referral date
+        (SELECT MAX(referral_date) FROM referrals) AS last_referral_date,
+        
+        -- Agency with most referrals
+        (
+          SELECT json_build_object(
+            'agency_id', a.id,
+            'agency_name', a.name,
+            'report_count', COUNT(r.id)
+          )
+          FROM agencies a
+          LEFT JOIN referrals r ON r.agency_id = a.id
+          GROUP BY a.id, a.name
+          ORDER BY COUNT(r.id) DESC
+          LIMIT 1
+        ) AS top_agency_by_reports
+    `);
+
+    const summary = result.rows[0];
+    
+    // Calculate processing rate
+    const totalReports = parseInt(summary.total_assigned_reports) || 0;
+    const processedReports = parseInt(summary.processed_reports) || 0;
+    const processingRate = totalReports > 0 ? 
+      Math.round((processedReports / totalReports) * 100) : 0;
+
+    const response = {
+      total_agencies: parseInt(summary.total_agencies) || 0,
+      active_agencies: parseInt(summary.active_agencies) || 0,
+      inactive_agencies: parseInt(summary.inactive_agencies) || 0,
+      total_assigned_reports: totalReports,
+      processed_reports: processedReports,
+      pending_reports: parseInt(summary.pending_reports) || 0,
+      processing_rate_percentage: processingRate,
+      total_agency_contacts: parseInt(summary.total_agency_contacts) || 0,
+      avg_reports_per_agency: parseFloat(summary.avg_reports_per_agency) || 0,
+      last_referral_date: summary.last_referral_date,
+      top_agency_by_reports: summary.top_agency_by_reports || null
+    };
+
+    res.status(200).json({ 
+      success: true, 
+      collective_summary: response 
+    });
+
+  } catch (err) {
+    console.error('Error fetching collective agency summary:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error fetching collective summary', 
+      error: err.message 
+    });
+  }
+};
 
 
 // GET /agencies/:id/referred-reports
