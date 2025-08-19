@@ -193,6 +193,7 @@ async register(req, res) {
 }
   
   // Login user with email OR phone number
+  // Login user with email OR phone number
   async login(req, res) {
     try {
       console.log('Login request received:', {
@@ -275,9 +276,9 @@ async register(req, res) {
       
       console.log('Login successful - cookie set');
       
+      // REMOVED: token from response - now using cookies only
       return res.status(200).json({
         success: true,
-        token: token,
         user: {
           id: user.rows[0].id,
           username: user.rows[0].username,
@@ -285,7 +286,7 @@ async register(req, res) {
           phone_number: user.rows[0].phone_number,
           full_name: user.rows[0].full_name,
           is_admin: user.rows[0].is_admin,
-          is_master_admin: user.rows[0].is_master_admin,  // ✅ Add this
+          is_master_admin: user.rows[0].is_master_admin,
           is_agency_user: user.rows[0].is_agency_user,
           profile_picture: user.rows[0].profile_picture
         }        
@@ -321,7 +322,7 @@ async register(req, res) {
         { expiresIn: '1d' }
       );
   
-      // Optional: Set as cookie if using in browser
+      // Set as cookie for authentication
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
@@ -330,22 +331,23 @@ async register(req, res) {
         path: '/'
       });
   
+      // REMOVED: token from response - now using cookies only
       return res.status(200).json({
         success: true,
-        token,
         user: {
           id: user.id,
           email: user.email,
-          is_admin: true // ✅ frontend can now detect admin
-          //is_master_admin: user.is_master_admin  // ✅ Add this
+          username: user.username,
+          full_name: user.full_name,
+          is_admin: true,
+          is_master_admin: user.is_master_admin
         }
       });
     } catch (error) {
       console.error('Error in adminLogin:', error);
       return res.status(500).json({ success: false, message: 'Server error' });
     }
-  }  
-  
+  }
 
   // Enhanced Google OAuth callback handler
   async handleGoogleCallback(req, res) {
@@ -455,10 +457,10 @@ async register(req, res) {
       
       console.log('Google OAuth successful - cookie set');
       
+      // REMOVED: token from response - now using cookies only
       return res.status(200).json({
         success: true,
         message: 'Google authentication successful',
-        token: jwtToken, // Add this line - return the token
         user: {
           id: user.rows[0].id,
           email: user.rows[0].email,
@@ -467,9 +469,8 @@ async register(req, res) {
           username: user.rows[0].username,
           phone_number: user.rows[0].phone_number,
           is_admin: user.rows[0].is_admin,
-          is_master_admin: user.rows[0].is_master_admin  // ✅ Add this
+          is_master_admin: user.rows[0].is_master_admin
         }
-        
       });
     } catch (error) {
       console.error('Error handling Google callback:', error);
