@@ -202,39 +202,99 @@ exports.addContactPerson = async (req, res) => {
     }
   };
   
-  // Update to deleteAgency to include agency_contacts cleanup + logging
-  exports.deleteAgency = async (req, res) => {
-    const agencyId = req.params.id;
+  // Update to deleteAgency to include agency_contacts and users cleanup + logging
+exports.deleteAgency = async (req, res) => {
+  const agencyId = req.params.id;
   
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-  
-      await client.query('DELETE FROM agency_contacts WHERE agency_id = $1', [agencyId]);
-      await client.query('DELETE FROM agencies WHERE id = $1', [agencyId]);
-  
-      await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
-         VALUES ($1, $2, $3, $4, $5)`,
-        ['DELETE', 'AGENCY', agencyId, req.user.id, `Deleted agency ${agencyId}`]
-      );
-      
-      
-      
-      await client.query('COMMIT');
-      
-      console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId}`);
-      return res.status(200).json({ success: true, message: 'Agency and contacts deleted' });      
-      
-  
-    } catch (err) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // First, get all users associated with this agency for logging purposes
+    const associatedUsers = await client.query(
+      `SELECT u.id, u.email, u.full_name 
+       FROM users u 
+       JOIN agency_contacts ac ON u.id = ac.user_id 
+       WHERE ac.agency_id = $1 AND u.is_agency_user = true`,
+      [agencyId]
+    );
+    
+    // Delete agency users who are marked as agency-only users
+    await client.query(
+      `DELETE FROM users 
+       WHERE id IN (
+         SELECT u.id 
+         FROM users u 
+         JOIN agency_contacts ac ON u.id = ac.user_id 
+         WHERE ac.agency_id = $1 AND u.is_agency_user = true
+       )`,
+      [agencyId]
+    );
+    
+    // Delete agency contacts (this will handle any remaining contacts)
+    await client.query('DELETE FROM agency_contacts WHERE agency_id = $1', [agencyId]);
+    
+    // Delete the agency itself
+    const deletedAgency = await client.query(
+      'DELETE FROM agencies WHERE id = $1 RETURNING name',
+      [agencyId]
+    );
+    
+    if (deletedAgency.rows.length === 0) {
       await client.query('ROLLBACK');
-      console.error(err);
-      return res.status(500).json({ success: false, message: 'Deletion failed', error: err.message });
-    } finally {
-      client.release();
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Agency not found' 
+      });
     }
-  };  
+    
+    // Log the deletion with details about deleted users
+    const deletionDetails = {
+      agency_id: agencyId,
+      agency_name: deletedAgency.rows[0].name,
+      deleted_users_count: associatedUsers.rows.length,
+      deleted_users: associatedUsers.rows.map(user => ({
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name
+      }))
+    };
+    
+    await client.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        'DELETE', 
+        'AGENCY', 
+        agencyId, 
+        req.user.id, 
+        `Deleted agency ${agencyId} (${deletedAgency.rows[0].name}) and ${associatedUsers.rows.length} associated users`
+      ]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId} and ${associatedUsers.rows.length} users`);
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: `Agency and ${associatedUsers.rows.length} associated users deleted successfully`,
+      deleted_users_count: associatedUsers.rows.length,
+      deleted_agency_name: deletedAgency.rows[0].name
+    });
+    
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting agency:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Deletion failed', 
+      error: err.message 
+    });
+  } finally {
+    client.release();
+  }
+};
 
 // View agencies and contact persons
 exports.getAgencies = async (req, res) => {
