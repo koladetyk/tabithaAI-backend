@@ -1446,6 +1446,31 @@ async getReportsByContact(req, res) {
     }
   }
 
+  // NEW: Get the latest 100 reports (for overview/dashboard)
+  async getLatestReports(req, res) {
+    try {
+      const result = await db.query(`
+        SELECT * FROM reports 
+        ORDER BY submitted_date DESC 
+        LIMIT 100
+      `);
+
+      return res.status(200).json({
+        success: true,
+        count: result.rows.length,
+        data: result.rows
+      });
+    } catch (error) {
+      console.error('Error fetching latest reports:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error fetching latest reports',
+        error: error.message
+      });
+    }
+  }
+
+
   // Update report status
   async updateReportStatus(req, res) {
     try {

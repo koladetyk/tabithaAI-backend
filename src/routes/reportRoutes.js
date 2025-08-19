@@ -54,4 +54,6 @@ router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 // No authentication required - perfect for anonymous reporting
 router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
 
+router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
+
 module.exports = router;
