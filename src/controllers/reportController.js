@@ -1451,7 +1451,7 @@ async getReportsByContact(req, res) {
     try {
       const result = await db.query(`
         SELECT * FROM reports 
-        ORDER BY submitted_date DESC 
+        ORDER BY created_at DESC
         LIMIT 100
       `);
 
