@@ -202,7 +202,7 @@ exports.addContactPerson = async (req, res) => {
     }
   };
   
-  // Update to deleteAgency to include agency_contacts and users cleanup + logging
+ // Update to deleteAgency to include referrals, agency_contacts and users cleanup + logging
 exports.deleteAgency = async (req, res) => {
   const agencyId = req.params.id;
   
@@ -218,6 +218,16 @@ exports.deleteAgency = async (req, res) => {
        WHERE ac.agency_id = $1 AND u.is_agency_user = true`,
       [agencyId]
     );
+    
+    // Get referrals count for logging
+    const referralsResult = await client.query(
+      'SELECT COUNT(*) as count FROM referrals WHERE agency_id = $1',
+      [agencyId]
+    );
+    const referralsCount = parseInt(referralsResult.rows[0].count);
+    
+    // Delete referrals first (to handle foreign key constraint)
+    await client.query('DELETE FROM referrals WHERE agency_id = $1', [agencyId]);
     
     // Delete agency users who are marked as agency-only users
     await client.query(
@@ -248,18 +258,7 @@ exports.deleteAgency = async (req, res) => {
       });
     }
     
-    // Log the deletion with details about deleted users
-    const deletionDetails = {
-      agency_id: agencyId,
-      agency_name: deletedAgency.rows[0].name,
-      deleted_users_count: associatedUsers.rows.length,
-      deleted_users: associatedUsers.rows.map(user => ({
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name
-      }))
-    };
-    
+    // Log the deletion with details about deleted users and referrals
     await client.query(
       `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -268,18 +267,19 @@ exports.deleteAgency = async (req, res) => {
         'AGENCY', 
         agencyId, 
         req.user.id, 
-        `Deleted agency ${agencyId} (${deletedAgency.rows[0].name}) and ${associatedUsers.rows.length} associated users`
+        `Deleted agency ${agencyId} (${deletedAgency.rows[0].name}), ${associatedUsers.rows.length} users, and ${referralsCount} referrals`
       ]
     );
     
     await client.query('COMMIT');
     
-    console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId} and ${associatedUsers.rows.length} users`);
+    console.log(`[Admin:${req.user.id}] Deleted agency ${agencyId}, ${associatedUsers.rows.length} users, and ${referralsCount} referrals`);
     
     return res.status(200).json({ 
       success: true, 
-      message: `Agency and ${associatedUsers.rows.length} associated users deleted successfully`,
+      message: `Agency, ${associatedUsers.rows.length} users, and ${referralsCount} referrals deleted successfully`,
       deleted_users_count: associatedUsers.rows.length,
+      deleted_referrals_count: referralsCount,
       deleted_agency_name: deletedAgency.rows[0].name
     });
     
