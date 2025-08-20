@@ -346,17 +346,17 @@ exports.updateContactPerson = async (req, res) => {
       const conditions = [];
 
       if (email && email !== contactCheck.rows[0].email) {
-        conditions.push(`email = ${checkParams.length + 1}`);
+        conditions.push(`email = $${checkParams.length + 1}`);
         checkParams.push(email);
       }
 
       if (phone_number && phone_number !== contactCheck.rows[0].phone_number) {
-        conditions.push(`phone_number = ${checkParams.length + 1}`);
+        conditions.push(`phone_number = $${checkParams.length + 1}`);
         checkParams.push(phone_number);
       }
 
       if (username && username !== contactCheck.rows[0].username) {
-        conditions.push(`username = ${checkParams.length + 1}`);
+        conditions.push(`username = $${checkParams.length + 1}`);
         checkParams.push(username);
       }
 
@@ -380,27 +380,27 @@ exports.updateContactPerson = async (req, res) => {
     let paramCount = 1;
 
     if (username !== undefined) {
-      updateFields.push(`username = ${paramCount++}`);
+      updateFields.push(`username = $${paramCount++}`);
       updateParams.push(username);
     }
 
     if (full_name !== undefined) {
-      updateFields.push(`full_name = ${paramCount++}`);
+      updateFields.push(`full_name = $${paramCount++}`);
       updateParams.push(full_name);
     }
 
     if (email !== undefined) {
-      updateFields.push(`email = ${paramCount++}`);
+      updateFields.push(`email = $${paramCount++}`);
       updateParams.push(email);
     }
 
     if (phone_number !== undefined) {
-      updateFields.push(`phone_number = ${paramCount++}`);
+      updateFields.push(`phone_number = $${paramCount++}`);
       updateParams.push(phone_number);
     }
 
     if (address !== undefined) {
-      updateFields.push(`address = ${paramCount++}`);
+      updateFields.push(`address = $${paramCount++}`);
       updateParams.push(address);
     }
 
@@ -411,7 +411,7 @@ exports.updateContactPerson = async (req, res) => {
     const updateQuery = `
       UPDATE users SET 
         ${updateFields.join(', ')}
-      WHERE id = ${paramCount}
+      WHERE id = $${paramCount}
       RETURNING id, username, full_name, email, phone_number, address, updated_at
     `;
 
