@@ -72,43 +72,95 @@ exports.addAgency = async (req, res) => {
 
   
 
-// Admin updates agency info
+// Admin updates agency info (including status)
 exports.updateAgency = async (req, res) => {
   const agencyId = parseInt(req.params.id);
-  const { name, agency_notes, address } = req.body;
+  const { name, agency_notes, address, status } = req.body;
 
   if (isNaN(agencyId)) {
     return res.status(400).json({ success: false, message: 'Invalid agency ID' });
   }
 
+  // Validate that at least one field is provided for update
+  if (!name && !agency_notes && address === undefined && !status) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'At least one field (name, agency_notes, address, or status) must be provided for update' 
+    });
+  }
+
+  // Validate status if provided
+  if (status && !['Active', 'Inactive'].includes(status)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Status must be either "Active" or "Inactive"' 
+    });
+  }
+
   try {
     // Check if agency exists
-    const agencyCheck = await db.query('SELECT id FROM agencies WHERE id = $1', [agencyId]);
+    const agencyCheck = await db.query('SELECT id, name FROM agencies WHERE id = $1', [agencyId]);
 
     if (agencyCheck.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Agency not found' });
     }
 
-    // Perform update
-    await db.query(
-      'UPDATE agencies SET name = $1, agency_notes = $2, address = $3, updated_at = CURRENT_DATE WHERE id = $4',
-      [name, agency_notes, address, agencyId]
-    );  
+    // Build dynamic update query
+    const updateFields = [];
+    const updateParams = [];
+    let paramCount = 1;
+
+    if (name !== undefined) {
+      updateFields.push(`name = $${paramCount++}`);
+      updateParams.push(name);
+    }
+
+    if (agency_notes !== undefined) {
+      updateFields.push(`agency_notes = $${paramCount++}`);
+      updateParams.push(agency_notes);
+    }
+
+    if (address !== undefined) {
+      updateFields.push(`address = $${paramCount++}`);
+      updateParams.push(address);
+    }
+
+    if (status !== undefined) {
+      updateFields.push(`status = $${paramCount++}`);
+      updateParams.push(status);
+    }
+
+    // Always update the updated_at field
+    updateFields.push('updated_at = CURRENT_DATE');
+    updateParams.push(agencyId); // For WHERE clause
+
+    const updateQuery = `
+      UPDATE agencies SET 
+        ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
+      RETURNING id, name, agency_notes, address, status, updated_at
+    `;
+
+    const result = await db.query(updateQuery, updateParams);
 
     // Log audit trail
     await db.query(
       `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
-      ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency ${name}`]
+      ['UPDATE', 'AGENCY', agencyId, req.user.id, `Updated agency "${result.rows[0].name}"${status ? ` - status set to ${status}` : ''}`]
     );
 
-    return res.status(200).json({ success: true, message: 'Agency updated successfully' });
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Agency updated successfully',
+      agency: result.rows[0]
+    });
 
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: 'Update failed', error: err.message });
   }
-};  
+};
 
 // Add a new contact person to an existing agency
 exports.addContactPerson = async (req, res) => {
