@@ -721,9 +721,15 @@ exports.getReferredReportsForAgency = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT * FROM referrals
-       WHERE agency_id = $1
-       ORDER BY referral_date DESC`,
+      `SELECT 
+        r.*,
+        rep.title as report_title,
+        rep.incident_type,
+        rep.incident_description
+       FROM referrals r
+       JOIN reports rep ON r.report_id = rep.id
+       WHERE r.agency_id = $1
+       ORDER BY r.referral_date DESC`,
       [agencyId]
     );
 
