@@ -339,8 +339,8 @@ exports.updateContactPerson = async (req, res) => {
       });
     }
 
-    // Check for conflicts with email, phone_number, or username if being updated
-    if (email || phone_number || username) {
+    // Check for conflicts with email or username ONLY (removed phone_number)
+    if (email || username) {
       let checkQuery = 'SELECT id FROM users WHERE id != $1 AND (';
       const checkParams = [userId];
       const conditions = [];
@@ -348,11 +348,6 @@ exports.updateContactPerson = async (req, res) => {
       if (email && email !== contactCheck.rows[0].email) {
         conditions.push(`email = $${checkParams.length + 1}`);
         checkParams.push(email);
-      }
-
-      if (phone_number && phone_number !== contactCheck.rows[0].phone_number) {
-        conditions.push(`phone_number = $${checkParams.length + 1}`);
-        checkParams.push(phone_number);
       }
 
       if (username && username !== contactCheck.rows[0].username) {
@@ -368,13 +363,13 @@ exports.updateContactPerson = async (req, res) => {
           await client.query('ROLLBACK');
           return res.status(400).json({ 
             success: false, 
-            message: 'Username, email, or phone number already exists for another user' 
+            message: 'Username or email already exists for another user' 
           });
         }
       }
     }
 
-    // Build dynamic update query
+    // Build dynamic update query (unchanged - all fields can still be updated)
     const updateFields = [];
     const updateParams = [];
     let paramCount = 1;
