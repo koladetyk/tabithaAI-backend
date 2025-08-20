@@ -3,7 +3,9 @@ const express = require('express');
 const router = express.Router();
 const reportController = require('../controllers/reportController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
-const fileUpload = require('../middleware/fileUpload');
+
+// UPDATED: Import the new optimized file upload middleware
+const fileUpload = require('../middleware/optimizedFileUpload');
 
 // Get all reports (admin only)
 router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
@@ -35,11 +37,22 @@ router.get('/:id', isAuthenticated, reportController.getReportById);
 // ENHANCED: Create new report with array structure support
 // Supports: audio_files[], images_videos[], note, email, phoneNumber, address
 // File uploads are additional to the arrays (URIs can be provided in arrays)
-router.post('/', isAuthenticated, fileUpload.multiple, reportController.createReport);
+// UPDATED: Using new middleware with better error handling and file size limits
+router.post('/', 
+  isAuthenticated, 
+  ...fileUpload.multiple('files', 10), // Allow up to 10 files with smart size limits
+  reportController.createReport
+);
 
 // LEGACY: Create new audio-specific report (backwards compatibility)
 // This now redirects to the main createReport with transformed data
-router.post('/audio', isAuthenticated, fileUpload.multiple, reportController.createAudioReport);
+// UPDATED: Using audio-specific middleware for better audio file handling
+router.post('/audio', 
+  isAuthenticated, 
+  fileUpload.audioUpload.array('files', 5), // Up to 5 audio files
+  fileUpload.handleUploadError,
+  reportController.createAudioReport
+);
 
 // Update report
 router.put('/:id', isAuthenticated, reportController.updateReport);
@@ -55,6 +68,10 @@ router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 
 // ENHANCED: Guest report creation with array structure support
 // No authentication required - perfect for anonymous reporting
-router.post('/guest', fileUpload.multiple, reportController.createGuestReport);
+// UPDATED: Using new middleware with proper file size limits
+router.post('/guest', 
+  ...fileUpload.multiple('files', 10), // Allow up to 10 files for guest reports
+  reportController.createGuestReport
+);
 
 module.exports = router;
