@@ -35,6 +35,9 @@ router.post('/:id/contacts', isAuthenticated, isAdmin, agencyController.addConta
 // Update agency details
 router.put('/:id', isAuthenticated, isAdmin, agencyController.updateAgency);
 
+// Update/Edit a specific contact person in an agency
+router.put('/:agencyId/contacts/:userId', isAuthenticated, isAdmin, agencyController.updateContactPerson);
+
 // Toggle status (Active/Inactive)
 router.patch('/:id/status', isAuthenticated, isAdmin, agencyController.toggleAgencyStatus);
 

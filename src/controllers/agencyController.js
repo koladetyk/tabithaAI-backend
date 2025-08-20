@@ -296,6 +296,153 @@ exports.deleteAgency = async (req, res) => {
   }
 };
 
+// Edit/Update a contact person's information
+exports.updateContactPerson = async (req, res) => {
+  const { agencyId, userId } = req.params;
+  const { username, full_name, email, phone_number, address } = req.body;
+
+  if (!username && !full_name && !email && !phone_number && !address) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'At least one field (username, full_name, email, phone_number, or address) must be provided' 
+    });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verify the contact person exists and belongs to the agency
+    const contactCheck = await client.query(
+      `SELECT u.id, u.username, u.full_name, u.email, u.phone_number, u.address 
+       FROM users u
+       JOIN agency_contacts ac ON u.id = ac.user_id
+       WHERE u.id = $1 AND ac.agency_id = $2 AND u.is_agency_user = true`,
+      [userId, agencyId]
+    );
+
+    if (contactCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Contact person not found for this agency' 
+      });
+    }
+
+    // Check for conflicts with email, phone_number, or username if being updated
+    if (email || phone_number || username) {
+      let checkQuery = 'SELECT id FROM users WHERE id != $1 AND (';
+      const checkParams = [userId];
+      const conditions = [];
+
+      if (email && email !== contactCheck.rows[0].email) {
+        conditions.push(`email = ${checkParams.length + 1}`);
+        checkParams.push(email);
+      }
+
+      if (phone_number && phone_number !== contactCheck.rows[0].phone_number) {
+        conditions.push(`phone_number = ${checkParams.length + 1}`);
+        checkParams.push(phone_number);
+      }
+
+      if (username && username !== contactCheck.rows[0].username) {
+        conditions.push(`username = ${checkParams.length + 1}`);
+        checkParams.push(username);
+      }
+
+      if (conditions.length > 0) {
+        checkQuery += conditions.join(' OR ') + ')';
+        const existingUser = await client.query(checkQuery, checkParams);
+
+        if (existingUser.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Username, email, or phone number already exists for another user' 
+          });
+        }
+      }
+    }
+
+    // Build dynamic update query
+    const updateFields = [];
+    const updateParams = [];
+    let paramCount = 1;
+
+    if (username !== undefined) {
+      updateFields.push(`username = ${paramCount++}`);
+      updateParams.push(username);
+    }
+
+    if (full_name !== undefined) {
+      updateFields.push(`full_name = ${paramCount++}`);
+      updateParams.push(full_name);
+    }
+
+    if (email !== undefined) {
+      updateFields.push(`email = ${paramCount++}`);
+      updateParams.push(email);
+    }
+
+    if (phone_number !== undefined) {
+      updateFields.push(`phone_number = ${paramCount++}`);
+      updateParams.push(phone_number);
+    }
+
+    if (address !== undefined) {
+      updateFields.push(`address = ${paramCount++}`);
+      updateParams.push(address);
+    }
+
+    // Add updated_at and user ID
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(userId);
+
+    const updateQuery = `
+      UPDATE users SET 
+        ${updateFields.join(', ')}
+      WHERE id = ${paramCount}
+      RETURNING id, username, full_name, email, phone_number, address, updated_at
+    `;
+
+    const updatedUser = await client.query(updateQuery, updateParams);
+
+    // Log the update
+    await client.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        'UPDATE', 
+        'CONTACT', 
+        userId, 
+        req.user.id, 
+        `Updated contact ${updatedUser.rows[0].email} in agency ${agencyId}`
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    console.log(`[Admin:${req.user.id}] Updated contact ${userId} in agency ${agencyId}`);
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Contact person updated successfully',
+      contact: updatedUser.rows[0]
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating contact person:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Update contact failed', 
+      error: err.message 
+    });
+  } finally {
+    client.release();
+  }
+};
+
 // View agencies and contact persons
 exports.getAgencies = async (req, res) => {
   try {
