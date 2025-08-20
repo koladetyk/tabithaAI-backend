@@ -301,6 +301,16 @@ exports.updateContactPerson = async (req, res) => {
   const { agencyId, userId } = req.params;
   const { username, full_name, email, phone_number, address } = req.body;
 
+  // Parse agencyId to integer to ensure proper type
+  const parsedAgencyId = parseInt(agencyId);
+  
+  if (isNaN(parsedAgencyId)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Invalid agency ID' 
+    });
+  }
+
   if (!username && !full_name && !email && !phone_number && !address) {
     return res.status(400).json({ 
       success: false, 
@@ -318,7 +328,7 @@ exports.updateContactPerson = async (req, res) => {
        FROM users u
        JOIN agency_contacts ac ON u.id = ac.user_id
        WHERE u.id = $1 AND ac.agency_id = $2 AND u.is_agency_user = true`,
-      [userId, agencyId]
+      [userId, parsedAgencyId]
     );
 
     if (contactCheck.rows.length === 0) {
@@ -416,13 +426,13 @@ exports.updateContactPerson = async (req, res) => {
         'CONTACT', 
         userId, 
         req.user.id, 
-        `Updated contact ${updatedUser.rows[0].email} in agency ${agencyId}`
+        `Updated contact ${updatedUser.rows[0].email} in agency ${parsedAgencyId}`
       ]
     );
 
     await client.query('COMMIT');
 
-    console.log(`[Admin:${req.user.id}] Updated contact ${userId} in agency ${agencyId}`);
+    console.log(`[Admin:${req.user.id}] Updated contact ${userId} in agency ${parsedAgencyId}`);
     
     return res.status(200).json({ 
       success: true, 
