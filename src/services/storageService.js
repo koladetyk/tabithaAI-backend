@@ -37,48 +37,138 @@ const bucket = storage.bucket(bucketName);
  * @returns {Promise<String>} - GCS URI of the uploaded file
  */
 const uploadFile = async (file, userId, reportId, evidenceType) => {
-  // Create folder structure: userId/reportId/evidenceType/
-  const fileName = `${userId}/${reportId}/${evidenceType}/${Date.now()}-${file.originalname}`;
-  const fileUpload = bucket.file(fileName);
-  
-  // Debug the file object
+  try {
+    // Create folder structure: userId/reportId/evidenceType/
+    const fileName = `${userId}/${reportId}/${evidenceType}/${Date.now()}-${file.originalname}`;
+    const fileUpload = bucket.file(fileName);
+    
+    // Debug the file object
     console.log('File details:', {
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        buffer: file.buffer ? `Buffer exists (${file.buffer.length} bytes)` : 'No buffer found'
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      path: file.path,
+      buffer: file.buffer ? `Buffer exists (${file.buffer.length} bytes)` : 'No buffer found'
     });
-  
-  const blobStream = fileUpload.createWriteStream({
-    metadata: {
-      contentType: file.mimetype,
-      metadata: {
-        userId: userId,
-        reportId: reportId,
-        originalName: file.originalname,
-        fileSize: file.size,
-      }
-    },
-    resumable: false // Set to true for files > 5MB
-  });
 
-  return new Promise((resolve, reject) => {
-    blobStream.on('error', (error) => {
-      console.error('Upload error:', error);
-      reject(error);
-    });
+    // Check if file exists on disk
+    if (!fs.existsSync(file.path)) {
+      throw new Error(`File not found at path: ${file.path}`);
+    }
+
+    // Upload options
+    const uploadOptions = {
+      metadata: {
+        contentType: file.mimetype,
+        metadata: {
+          userId: userId,
+          reportId: reportId,
+          originalName: file.originalname,
+          fileSize: file.size,
+        }
+      },
+      resumable: file.size > 5 * 1024 * 1024 // Use resumable for files > 5MB
+    };
+
+    // Upload the file from disk
+    await fileUpload.save(fs.readFileSync(file.path), uploadOptions);
     
-    blobStream.on('finish', async () => {
-      try {
-        // Get the file's GCS URI
-        const fileUri = `gs://${bucket.name}/${fileUpload.name}`;
-        resolve(fileUri); // Just return the GCS URI as a string
-      } catch (error) {
-        reject(error);
+    // Clean up the temporary file
+    try {
+      fs.unlinkSync(file.path);
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup temporary file:', cleanupError);
+    }
+    
+    // Get the file's GCS URI
+    const fileUri = `gs://${bucket.name}/${fileUpload.name}`;
+    console.log('Successfully uploaded file to:', fileUri);
+    
+    return fileUri;
+    
+  } catch (error) {
+    console.error('Upload error:', error);
+    
+    // Clean up temporary file if it still exists
+    try {
+      if (file.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
       }
-    });
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup temporary file after error:', cleanupError);
+    }
     
-    blobStream.end(file.buffer);
+    throw error;
+  }
+};
+
+/**
+ * Alternative upload method using streams (if you prefer)
+ */
+const uploadFileStream = async (file, userId, reportId, evidenceType) => {
+  return new Promise((resolve, reject) => {
+    try {
+      // Create folder structure: userId/reportId/evidenceType/
+      const fileName = `${userId}/${reportId}/${evidenceType}/${Date.now()}-${file.originalname}`;
+      const fileUpload = bucket.file(fileName);
+      
+      // Check if file exists on disk
+      if (!fs.existsSync(file.path)) {
+        reject(new Error(`File not found at path: ${file.path}`));
+        return;
+      }
+
+      const blobStream = fileUpload.createWriteStream({
+        metadata: {
+          contentType: file.mimetype,
+          metadata: {
+            userId: userId,
+            reportId: reportId,
+            originalName: file.originalname,
+            fileSize: file.size,
+          }
+        },
+        resumable: file.size > 5 * 1024 * 1024
+      });
+
+      blobStream.on('error', (error) => {
+        console.error('Upload stream error:', error);
+        // Clean up temporary file
+        try {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        } catch (cleanupError) {
+          console.warn('Failed to cleanup temporary file after error:', cleanupError);
+        }
+        reject(error);
+      });
+      
+      blobStream.on('finish', async () => {
+        try {
+          // Clean up the temporary file
+          try {
+            fs.unlinkSync(file.path);
+          } catch (cleanupError) {
+            console.warn('Failed to cleanup temporary file:', cleanupError);
+          }
+          
+          // Get the file's GCS URI
+          const fileUri = `gs://${bucket.name}/${fileUpload.name}`;
+          console.log('Successfully uploaded file to:', fileUri);
+          resolve(fileUri);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      
+      // Create read stream from the temporary file and pipe it to GCS
+      const fileStream = fs.createReadStream(file.path);
+      fileStream.pipe(blobStream);
+      
+    } catch (error) {
+      reject(error);
+    }
   });
 };
 
@@ -132,6 +222,12 @@ const getSignedUrl = async (gcsUri, expiresInMinutes = 60) => {
       
       const file = storage.bucket(bucketName).file(fileName);
       
+      // First check if file exists
+      const [exists] = await file.exists();
+      if (!exists) {
+        throw new Error(`File not found in Google Cloud Storage: ${fileName}`);
+      }
+      
       const options = {
         version: 'v4',
         action: 'read',
@@ -141,7 +237,7 @@ const getSignedUrl = async (gcsUri, expiresInMinutes = 60) => {
       const [url] = await file.getSignedUrl(options);
       return url;
     } else {
-      throw new Error('Invalid GCS URI format');
+      throw new Error('Invalid GCS URI format - must start with gs://');
     }
   } catch (error) {
     console.error('Signed URL error:', error);
@@ -151,6 +247,7 @@ const getSignedUrl = async (gcsUri, expiresInMinutes = 60) => {
 
 module.exports = {
   uploadFile,
+  uploadFileStream, // Alternative method
   deleteFile,
   getSignedUrl
 };
