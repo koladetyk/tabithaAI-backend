@@ -1446,7 +1446,7 @@ async getReportsByContact(req, res) {
     }
   }
 
-  // Get latest 100 reports referred to agencies (for admin and agency users)
+// Get latest 100 reports referred to agencies (for admin and agency users)
 async getLatestReferredReports(req, res) {
   try {
     let query = `
@@ -1490,21 +1490,59 @@ async getLatestReferredReports(req, res) {
 
     const result = await db.query(query, queryParams);
 
-    // Get evidence summaries for all reports (reusing your existing logic)
+    // Get evidence summaries for all reports
     const reportIds = result.rows.map(report => report.id);
-    let evidenceSummaries = {};
+    let reportsWithEvidence = result.rows;
     
     if (reportIds.length > 0) {
-      evidenceSummaries = await evidenceController.getEvidenceSummaryForReports(reportIds);
+      // Get evidence counts for each report
+      const evidenceQuery = `
+        SELECT 
+          report_id,
+          evidence_type,
+          COUNT(*) as count
+        FROM evidence 
+        WHERE report_id = ANY($1)
+        GROUP BY report_id, evidence_type
+      `;
+      
+      const evidenceResult = await db.query(evidenceQuery, [reportIds]);
+      
+      // Build evidence summary for each report
+      const evidenceSummaries = {};
+      
+      // Initialize summaries
+      reportIds.forEach(reportId => {
+        evidenceSummaries[reportId] = { 
+          total: 0, images: 0, audios: 0, videos: 0, documents: 0 
+        };
+      });
+      
+      // Populate summaries from query results
+      evidenceResult.rows.forEach(row => {
+        const { report_id, evidence_type, count } = row;
+        const numCount = parseInt(count);
+        evidenceSummaries[report_id].total += numCount;
+        
+        if (evidence_type === 'image') {
+          evidenceSummaries[report_id].images = numCount;
+        } else if (evidence_type === 'audio') {
+          evidenceSummaries[report_id].audios = numCount;
+        } else if (evidence_type === 'video') {
+          evidenceSummaries[report_id].videos = numCount;
+        } else {
+          evidenceSummaries[report_id].documents = numCount;
+        }
+      });
+      
+      // Add evidence summaries to reports
+      reportsWithEvidence = result.rows.map(report => ({
+        ...report,
+        evidenceSummary: evidenceSummaries[report.id] || { 
+          total: 0, images: 0, audios: 0, videos: 0, documents: 0 
+        }
+      }));
     }
-
-    // Add evidence summaries to reports
-    const reportsWithEvidence = result.rows.map(report => ({
-      ...report,
-      evidenceSummary: evidenceSummaries[report.id] || { 
-        total: 0, images: 0, audios: 0, videos: 0, documents: 0 
-      }
-    }));
 
     const userType = req.user.is_admin ? 'admin' : 'agency user';
     const scopeMessage = req.user.is_admin ? 
