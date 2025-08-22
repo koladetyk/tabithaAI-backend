@@ -1471,20 +1471,48 @@ async getReportsByContact(req, res) {
   }
 
 
-  // Update report status
+  // Update your updateReportStatus method in ReportController.js
+
   async updateReportStatus(req, res) {
     try {
       const reportId = req.params.id;
-      const { status } = req.body;
+      let { status } = req.body;
       
-      // Validate status
-      const validStatuses = ['submitted', 'under_review', 'in_progress', 'resolved', 'closed', 'archived'];
-      if (!validStatuses.includes(status)) {
+      // Normalize the status (trim whitespace and convert to lowercase)
+      status = status?.toString().trim().toLowerCase();
+      
+      // Define valid statuses (all lowercase for comparison)
+      const validStatuses = [
+        'submitted', 
+        'under_review', 
+        'in_progress', 
+        'resolved', 
+        'closed', 
+        'archived',
+        'pending',        // Add common alternative
+        'completed',      // Add common alternative
+        'open'           // Add common alternative
+      ];
+      
+      // Map common alternatives to your standard statuses
+      const statusMappings = {
+        'pending': 'submitted',
+        'completed': 'resolved',
+        'open': 'submitted'
+      };
+      
+      // Apply mapping if needed
+      const mappedStatus = statusMappings[status] || status;
+      
+      if (!validStatuses.includes(status) && !validStatuses.includes(mappedStatus)) {
+        console.log('Invalid status received:', req.body.status); // Debug log
         return res.status(400).json({
           success: false,
-          message: `Invalid status. Status must be one of: ${validStatuses.join(', ')}`
+          message: `Invalid status "${req.body.status}". Status must be one of: submitted, under_review, in_progress, resolved, closed, archived`
         });
       }
+      
+      const finalStatus = mappedStatus;
       
       // Check if report exists
       const existingReport = await db.query(
@@ -1499,7 +1527,7 @@ async getReportsByContact(req, res) {
         });
       }
       
-      // Check permissions based on status change
+      // Check permissions
       if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
         return res.status(403).json({
           success: false,
@@ -1514,25 +1542,26 @@ async getReportsByContact(req, res) {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
         RETURNING *`,
-        [status, reportId]
+        [finalStatus, reportId]
       );
       
       // Send notification if user isn't anonymous and status has changed
-      if (existingReport.rows[0].user_id && status !== existingReport.rows[0].status) {
+      if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
         await notificationService.sendReportStatusNotification(
           existingReport.rows[0].user_id,
           reportId,
-          status
+          finalStatus
         );
       }
       
       return res.status(200).json({
         success: true,
         data: updatedReport.rows[0],
-        message: `Report status updated to "${status}" successfully`
+        message: `Report status updated to "${finalStatus}" successfully`
       });
     } catch (error) {
       console.error('Error updating report status:', error);
+      console.error('Request body:', req.body); // Debug log
       return res.status(500).json({
         success: false,
         message: 'Server error updating report status',
@@ -1540,6 +1569,8 @@ async getReportsByContact(req, res) {
       });
     }
   }
+
+
 }
 
 module.exports = new ReportController();
