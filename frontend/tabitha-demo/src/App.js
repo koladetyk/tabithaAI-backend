@@ -7,11 +7,11 @@ const TabithaAIDemoApp = () => {
   const [reports, setReports] = useState([]);
   const [uploadStatus, setUploadStatus] = useState('');
 
-  // CORRECT:
-    const CONFIG = {
-        API_BASE_URL: 'https://web-production-877a.up.railway.app/api/v1', // Base URL only
-        GOOGLE_CLIENT_ID: '469162824107-vgvkuuenlo5suk0cqantphh0csv4s73v.apps.googleusercontent.com'
-    };
+  // Configuration - Replace with actual values
+  const CONFIG = {
+    API_BASE_URL: 'https://web-production-877a.up.railway.app/api/v1',
+    GOOGLE_CLIENT_ID: '469162824107-vgvkuuenlo5suk0cqantphh0csv4s73v.apps.googleusercontent.com'
+  };
 
   // Initialize Google Sign-In
   useEffect(() => {
@@ -21,17 +21,35 @@ const TabithaAIDemoApp = () => {
     script.defer = true;
     
     script.onload = () => {
+      console.log('Google script loaded successfully');
       if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: CONFIG.GOOGLE_CLIENT_ID,
-          callback: handleGoogleSignIn,
-          auto_select: false
-        });
+        console.log('Google object available:', typeof window.google);
+        try {
+          window.google.accounts.id.initialize({
+            client_id: CONFIG.GOOGLE_CLIENT_ID,
+            callback: handleGoogleSignIn,
+            auto_select: false
+          });
+          console.log('Google Sign-In initialized successfully');
+        } catch (error) {
+          console.error('Error initializing Google Sign-In:', error);
+          setError('Failed to initialize Google Sign-In');
+        }
+      } else {
+        console.error('Google object not available after script load');
+        setError('Google Sign-In not available');
       }
     };
     
+    script.onerror = (error) => {
+      console.error('Failed to load Google script:', error);
+      setError('Failed to load Google Sign-In');
+    };
+    
     document.head.appendChild(script);
-    checkAuthStatus();
+    
+    // Don't check auth status immediately - wait for user action
+    // checkAuthStatus();
 
     return () => {
       if (document.head.contains(script)) {
