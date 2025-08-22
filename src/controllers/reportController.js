@@ -1447,92 +1447,88 @@ async getReportsByContact(req, res) {
   }
 
   // Get latest 100 reports referred to agencies (for admin and agency users)
-  async getLatestReferredReports(req, res) {
-    try {
-      let query = `
-        SELECT 
-          r.*,
-          ref.id as referral_id,
-          ref.referral_date,
-          ref.referral_status,
-          ref.notes as referral_notes,
-          ref.priority_level,
-          a.id as agency_id,
-          a.name as agency_name,
-          a.status as agency_status,
-          u.full_name as referred_by_name,
-          u.email as referred_by_email
-        FROM reports r
-        INNER JOIN referrals ref ON r.id = ref.report_id
-        LEFT JOIN agencies a ON ref.agency_id = a.id
-        LEFT JOIN users u ON ref.referred_by = u.id`;
+async getLatestReferredReports(req, res) {
+  try {
+    let query = `
+      SELECT 
+        r.*,
+        ref.id as referral_id,
+        ref.referral_date,
+        ref.referral_status,
+        ref.notes as referral_notes,
+        a.id as agency_id,
+        a.name as agency_name,
+        a.status as agency_status
+      FROM reports r
+      INNER JOIN referrals ref ON r.id = ref.report_id
+      LEFT JOIN agencies a ON ref.agency_id = a.id`;
 
-      let queryParams = [];
-      let whereClause = '';
+    let queryParams = [];
+    let whereClause = '';
 
-      // If user is agency user (not admin), filter by their agency
-      if (req.user.is_agency_user && !req.user.is_admin) {
-        // Get the agency ID for this user
-        const userAgency = await db.query(
-          'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
-          [req.user.id]
-        );
+    // If user is agency user (not admin), filter by their agency
+    if (req.user.is_agency_user && !req.user.is_admin) {
+      // Get the agency ID for this user
+      const userAgency = await db.query(
+        'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+        [req.user.id]
+      );
 
-        if (userAgency.rows.length === 0) {
-          return res.status(403).json({
-            success: false,
-            message: 'Agency user not associated with any agency'
-          });
-        }
-
-        whereClause = ' WHERE ref.agency_id = $1';
-        queryParams.push(userAgency.rows[0].agency_id);
+      if (userAgency.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Agency user not associated with any agency'
+        });
       }
 
-      // Complete the query
-      query += whereClause + ' ORDER BY ref.referral_date DESC LIMIT 100';
-
-      const result = await db.query(query, queryParams);
-
-      // Get evidence summaries for all reports (reusing your existing logic)
-      const reportIds = result.rows.map(report => report.id);
-      let evidenceSummaries = {};
-      
-      if (reportIds.length > 0) {
-        evidenceSummaries = await evidenceController.getEvidenceSummaryForReports(reportIds);
-      }
-
-      // Add evidence summaries to reports
-      const reportsWithEvidence = result.rows.map(report => ({
-        ...report,
-        evidenceSummary: evidenceSummaries[report.id] || { 
-          total: 0, images: 0, audios: 0, videos: 0, documents: 0 
-        }
-      }));
-
-      const userType = req.user.is_admin ? 'admin' : 'agency user';
-      const scopeMessage = req.user.is_admin ? 
-        'all agencies' : 
-        `agency: ${result.rows.length > 0 ? result.rows[0].agency_name : 'your agency'}`;
-
-      return res.status(200).json({
-        success: true,
-        count: result.rows.length,
-        data: reportsWithEvidence,
-        userType,
-        scope: scopeMessage,
-        message: `Retrieved ${result.rows.length} latest referred reports for ${scopeMessage}`
-      });
-
-    } catch (error) {
-      console.error('Error fetching latest referred reports:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error fetching latest referred reports',
-        error: error.message
-      });
+      whereClause = ' WHERE ref.agency_id = $1';
+      queryParams.push(userAgency.rows[0].agency_id);
     }
+
+    // Complete the query
+    query += whereClause + ' ORDER BY ref.referral_date DESC LIMIT 100';
+
+    const result = await db.query(query, queryParams);
+
+    // Get evidence summaries for all reports (reusing your existing logic)
+    const reportIds = result.rows.map(report => report.id);
+    let evidenceSummaries = {};
+    
+    if (reportIds.length > 0) {
+      evidenceSummaries = await evidenceController.getEvidenceSummaryForReports(reportIds);
+    }
+
+    // Add evidence summaries to reports
+    const reportsWithEvidence = result.rows.map(report => ({
+      ...report,
+      evidenceSummary: evidenceSummaries[report.id] || { 
+        total: 0, images: 0, audios: 0, videos: 0, documents: 0 
+      }
+    }));
+
+    const userType = req.user.is_admin ? 'admin' : 'agency user';
+    const scopeMessage = req.user.is_admin ? 
+      'all agencies' : 
+      `agency: ${result.rows.length > 0 ? result.rows[0].agency_name : 'your agency'}`;
+
+    return res.status(200).json({
+      success: true,
+      count: result.rows.length,
+      data: reportsWithEvidence,
+      userType,
+      scope: scopeMessage,
+      message: `Retrieved ${result.rows.length} latest referred reports for ${scopeMessage}`
+    });
+
+  } catch (error) {
+    console.error('Error fetching latest referred reports:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching latest referred reports',
+      error: error.message
+    });
   }
+}
 
   // NEW: Get the latest 100 reports (for overview/dashboard)
   async getLatestReports(req, res) {
