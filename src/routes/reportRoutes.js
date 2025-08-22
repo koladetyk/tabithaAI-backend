@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const reportController = require('../controllers/reportController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
+const { isAgencyUser } = require('../middleware/roleChecks');
 
 // UPDATED: Import the new optimized file upload middleware
 const fileUpload = require('../middleware/optimizedFileUpload');
@@ -27,6 +28,18 @@ router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboa
 
 // NEW: Get latest 100 reports - MOVED BEFORE /:id route
 router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
+
+// NEW: Get latest 100 reports referred to agencies (admin and agency users)
+router.get('/latest-referred', isAuthenticated, (req, res, next) => {
+  // Allow both admin and agency users
+  if (req.user.is_admin || req.user.is_agency_user) {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    message: 'Admin or agency user access required'
+  });
+}, reportController.getLatestReferredReports);
 
 // Reanalyze a report with enhanced AI
 router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport);
