@@ -5,76 +5,25 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const db = require('../config/database');
 
+// Add this import instead:
+const { sendResetEmail } = require('../utils/sendTempPasswordEmail');
+
 // Initialize Google OAuth client
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-const { Resend } = require('resend');
-
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 class AuthController {
   constructor() {
     // Debug Resend environment variables
-    console.log('RESEND_API_KEY present?', !!process.env.RESEND_API_KEY);
-    console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
-    if (process.env.RESEND_API_KEY) {
-      console.log('RESEND_API_KEY starts with re_?', process.env.RESEND_API_KEY.startsWith('re_'));
-    }
+    
   }
 
-  // Helper method to send reset email using Resend
   async sendResetEmail(email, resetToken) {
     try {
-      if (!process.env.RESEND_API_KEY) {
-        throw new Error('RESEND_API_KEY is not configured');
-      }
-      
-      if (!process.env.FROM_EMAIL) {
-        throw new Error('FROM_EMAIL is not configured');
-      }
-
-      const response = await resend.emails.send({
-        from: process.env.FROM_EMAIL,
-        to: email,
-        subject: 'Tabitha AI - Password Reset Code',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="color: #333; margin-bottom: 10px;">Tabitha AI</h1>
-              <h2 style="color: #666; font-weight: normal;">Password Reset Request</h2>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-              <p style="margin: 0 0 15px 0; color: #333;">You requested a password reset for your account.</p>
-              <p style="margin: 0 0 15px 0; color: #333;">Your reset code is:</p>
-              <div style="text-align: center; margin: 20px 0;">
-                <span style="font-size: 32px; font-weight: bold; color: #007bff; letter-spacing: 3px; background-color: white; padding: 15px 25px; border-radius: 6px; border: 2px solid #007bff;">
-                  ${resetToken}
-                </span>
-              </div>
-              <p style="margin: 0; color: #666; font-size: 14px;">This code will expire in 15 minutes.</p>
-            </div>
-            
-            <div style="background-color: #fff3cd; padding: 15px; border-radius: 6px; border-left: 4px solid #ffc107;">
-              <p style="margin: 0; color: #856404; font-size: 14px;">
-                <strong>Security Note:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
-              </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-              <p style="margin: 0; color: #999; font-size: 12px;">
-                This email was sent by Tabitha AI Password Reset System
-              </p>
-            </div>
-          </div>
-        `,
-        text: `Your password reset code is: ${resetToken}. This code will expire in 15 minutes.`
-      });
-      
+      const { sendResetEmail } = require('../utils/sendTempPasswordEmail');
+      await sendResetEmail(email, resetToken);
       console.log(`Password reset email sent to: ${email}`);
-      console.log(`Email ID: ${response.data?.id || 'unknown'}`);
-      return response;
+      return { success: true };
     } catch (error) {
       console.error('Error sending reset email:', error);
       throw error;
@@ -84,10 +33,6 @@ class AuthController {
   // ENHANCED: Request password reset with Resend email support
   async requestPasswordReset(req, res) {
     try {
-      console.log('=== PASSWORD RESET DEBUG ===');
-      console.log('RESEND_API_KEY present?', !!process.env.RESEND_API_KEY);
-      console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
-      console.log('================================');
       
       const { email, phone_number } = req.body;
         

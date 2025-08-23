@@ -1,70 +1,115 @@
 // utils/sendTempPasswordEmail.js
-const { Resend } = require('resend');
+const https = require('https');
 
-// Initialize Resend with API key
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Send temporary password email for new contacts
+async function sendTempPasswordEmail(email, tempPassword) {
+  return sendEmailJSTemplate({
+    templateId: process.env.EMAILJS_TEMP_PASSWORD_TEMPLATE_ID,
+    toEmail: email,
+    templateParams: {
+      to_email: email,
+      to_name: email.split('@')[0], // Use part before @ as name
+      temp_password: tempPassword,
+      subject: 'Your Login Credentials for Tabitha AI'
+    }
+  });
+}
 
-module.exports = async function sendTempPasswordEmail(email, tempPassword) {
+// Send password reset email  
+async function sendResetEmail(email, resetCode) {
+  return sendEmailJSTemplate({
+    templateId: process.env.EMAILJS_RESET_PASSWORD_TEMPLATE_ID,
+    toEmail: email,
+    templateParams: {
+      to_email: email,
+      reset_code: resetCode,
+      subject: 'Tabitha AI - Password Reset Code'
+    }
+  });
+}
+
+// Generic EmailJS sender function
+async function sendEmailJSTemplate({ templateId, toEmail, templateParams }) {
   try {
     // Validate environment variables
-    if (!process.env.RESEND_API_KEY) {
-      throw new Error('RESEND_API_KEY is not configured');
+    if (!process.env.EMAILJS_PUBLIC_KEY) {
+      throw new Error('EMAILJS_PUBLIC_KEY is not configured');
     }
     
-    if (!process.env.FROM_EMAIL) {
-      throw new Error('FROM_EMAIL is not configured');
+    if (!process.env.EMAILJS_PRIVATE_KEY) {
+      throw new Error('EMAILJS_PRIVATE_KEY is not configured');
+    }
+    
+    if (!process.env.EMAILJS_SERVICE_ID) {
+      throw new Error('EMAILJS_SERVICE_ID is not configured');
+    }
+    
+    if (!templateId) {
+      throw new Error('Template ID is not configured');
     }
 
-    // Send email using Resend
-    const response = await resend.emails.send({
-      from: process.env.FROM_EMAIL,
-      to: email,
-      subject: 'Your Login Password for Tabitha',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #333; margin-bottom: 10px;">Tabitha AI</h1>
-            <h2 style="color: #666; font-weight: normal;">Your Account Credentials</h2>
-          </div>
-          
-          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <p style="margin: 0 0 15px 0; color: #333;">Welcome! Your account has been created successfully.</p>
-            <p style="margin: 0 0 15px 0; color: #333;">Your temporary password is:</p>
-            <div style="text-align: center; margin: 20px 0;">
-              <span style="font-size: 24px; font-weight: bold; color: #007bff; letter-spacing: 2px; background-color: white; padding: 15px 25px; border-radius: 6px; border: 2px solid #007bff;">
-                ${tempPassword}
-              </span>
-            </div>
-            <p style="margin: 0; color: #666; font-size: 14px;">Please change this password after your first login.</p>
-          </div>
-          
-          <div style="background-color: #d4edda; padding: 15px; border-radius: 6px; border-left: 4px solid #28a745;">
-            <p style="margin: 0; color: #155724; font-size: 14px;">
-              <strong>Next Steps:</strong> Use this password to log in and update your profile settings.
-            </p>
-          </div>
-          
-          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-            <p style="margin: 0; color: #999; font-size: 12px;">
-              This email was sent by Tabitha Account Management System
-            </p>
-          </div>
-        </div>
-      `,
-      text: `Welcome to Tabitha! Your temporary password is: ${tempPassword}.`
-    });
+    // Prepare email data
+    const emailData = {
+      service_id: process.env.EMAILJS_SERVICE_ID,
+      template_id: templateId,
+      user_id: process.env.EMAILJS_PUBLIC_KEY,
+      accessToken: process.env.EMAILJS_PRIVATE_KEY,
+      template_params: templateParams
+    };
 
-    console.log(`✅ Password email sent successfully to ${email}`);
+    // Send email via EmailJS REST API
+    const response = await makeEmailJSRequest(emailData);
+
+    console.log(`✅ Email sent successfully to ${toEmail}`);
+    console.log(`📧 EmailJS Response: Success`);
     
-    // DEBUG: Log the entire response to see its structure
-    console.log('Full Resend response:', JSON.stringify(response, null, 2));
-    
-    // FIXED: Resend API returns the ID directly on the response object
-    console.log(`📧 Email ID: ${response.id || response.data?.id || 'unknown'}`);
-    
-    return response;
+    return { success: true, response };
   } catch (error) {
-    console.error(`❌ Failed to send email to ${email}:`, error.message);
+    console.error(`❌ Failed to send email to ${toEmail}:`, error.message);
     throw error;
   }
-};
+}
+
+function makeEmailJSRequest(data) {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(data);
+    
+    const options = {
+      hostname: 'api.emailjs.com',
+      port: 443,
+      path: '/api/v1.0/email/send',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      
+      res.on('data', (chunk) => {
+        responseData += chunk;
+      });
+      
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(responseData);
+        } else {
+          reject(new Error(`EmailJS API Error: ${res.statusCode} - ${responseData}`));
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      reject(error);
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
+
+// Export both functions
+module.exports = sendTempPasswordEmail;
+module.exports.sendResetEmail = sendResetEmail;
