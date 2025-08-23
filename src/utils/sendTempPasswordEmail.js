@@ -55,6 +55,10 @@ module.exports = async function sendTempPasswordEmail(email, tempPassword) {
     });
 
     console.log(`✅ Password email sent successfully to ${email}`);
+    
+    // DEBUG: Log the entire response to see its structure
+    console.log('Full Resend response:', JSON.stringify(response, null, 2));
+    
     // FIXED: Resend API returns the ID directly on the response object
     console.log(`📧 Email ID: ${response.id || response.data?.id || 'unknown'}`);
     
