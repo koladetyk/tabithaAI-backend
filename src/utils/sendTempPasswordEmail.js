@@ -38,8 +38,8 @@ module.exports = async function sendTempPasswordEmail(email, tempPassword) {
             <p style="margin: 0; color: #666; font-size: 14px;">Please change this password after your first login.</p>
           </div>
           
-          <div style="background-color: #e7f3ff; padding: 15px; border-radius: 6px; border-left: 4px solid #007bff;">
-            <p style="margin: 0; color: #004085; font-size: 14px;">
+          <div style="background-color: #d4edda; padding: 15px; border-radius: 6px; border-left: 4px solid #28a745;">
+            <p style="margin: 0; color: #155724; font-size: 14px;">
               <strong>Next Steps:</strong> Use this password to log in and update your profile settings.
             </p>
           </div>
@@ -55,7 +55,8 @@ module.exports = async function sendTempPasswordEmail(email, tempPassword) {
     });
 
     console.log(`✅ Password email sent successfully to ${email}`);
-    console.log(`📧 Email ID: ${response.data?.id || 'unknown'}`);
+    // FIXED: Resend API returns the ID directly on the response object
+    console.log(`📧 Email ID: ${response.id || response.data?.id || 'unknown'}`);
     
     return response;
   } catch (error) {
