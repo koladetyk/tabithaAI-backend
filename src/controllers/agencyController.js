@@ -4,7 +4,121 @@ const bcrypt = require('bcrypt');
 const generatePassword = require('../utils/generatePassword');
 const sendTempPasswordEmail = require('../utils/sendTempPasswordEmail'); // optional but recommended
 
-// Admin adds agency and contacts
+// Add a new contact person to an existing agency - IMPROVED ERROR HANDLING
+exports.addContactPerson = async (req, res) => {
+  const agencyId = req.params.id;
+  const { full_name, email, phone_number } = req.body;
+
+  if (!full_name || !email || !phone_number) {
+    return res.status(400).json({ success: false, message: 'Missing required fields' });
+  }
+
+  const client = await db.connect();
+  let tempPassword = null;
+  let userId = null;
+
+  try {
+    await client.query('BEGIN');
+
+    tempPassword = generatePassword();
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    userId = uuidv4();
+    const username = `${full_name.split(' ')[0].toLowerCase()}${Math.floor(Math.random() * 900 + 100)}`;
+
+    // Create user
+    await client.query(
+      `INSERT INTO users (id, full_name, username, email, phone_number, password_hash, is_agency_user)
+       VALUES ($1, $2, $3, $4, $5, $6, true)`,
+      [userId, full_name, username, email, phone_number, hashedPassword]
+    );
+
+    // Create agency contact mapping
+    await client.query(
+      `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
+      [agencyId, userId]
+    );
+
+    // Log the action
+    await client.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['ADD', 'CONTACT', userId, req.user.id, `Added contact ${email} to agency ${agencyId}`]
+    );
+
+    // Commit the database transaction FIRST
+    await client.query('COMMIT');
+    console.log(`[Admin:${req.user.id}] Database operations completed for contact ${email} to agency ${agencyId}`);
+
+    // THEN attempt to send email (non-critical)
+    let emailStatus = 'success';
+    let emailError = null;
+
+    try {
+      await sendTempPasswordEmail(email, tempPassword);
+      console.log(`Password email sent successfully to ${email}`);
+    } catch (emailErr) {
+      emailStatus = 'failed';
+      emailError = emailErr.message;
+      console.error(`Failed to send email to ${email}:`, emailErr.message);
+      console.log(`MANUAL DELIVERY NEEDED - Password for ${email}: ${tempPassword}`);
+      
+      // Log email failure for follow-up
+      await db.query(
+        `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['EMAIL_FAILED', 'CONTACT', userId, req.user.id, 
+         `Email delivery failed for ${email}. Manual delivery required. Error: ${emailErr.message}`]
+      );
+    }
+
+    // Return success regardless of email status
+    const responseData = {
+      success: true,
+      message: 'Contact person added successfully',
+      contact: {
+        id: userId,
+        email: email,
+        full_name: full_name
+      },
+      email_delivery: {
+        status: emailStatus,
+        message: emailStatus === 'success' 
+          ? 'Password email sent successfully'
+          : 'Email delivery failed - password logged for manual delivery'
+      }
+    };
+
+    // Include temp password in response if email failed (for development/testing)
+    if (emailStatus === 'failed' && process.env.NODE_ENV !== 'production') {
+      responseData.temp_password_for_manual_delivery = tempPassword;
+      responseData.email_error = emailError;
+    }
+
+    return res.status(201).json(responseData);
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error in addContactPerson:', err);
+    
+    // If we have the temp password, include it in error response for manual delivery
+    const errorResponse = {
+      success: false,
+      message: 'Add contact failed',
+      error: err.message
+    };
+
+    if (tempPassword && process.env.NODE_ENV !== 'production') {
+      errorResponse.temp_password_for_manual_delivery = tempPassword;
+      errorResponse.manual_delivery_note = `If user was created, manual password delivery needed for ${email}`;
+    }
+
+    return res.status(500).json(errorResponse);
+  } finally {
+    client.release();
+  }
+};
+
+// Admin adds agency and contacts - IMPROVED ERROR HANDLING
 exports.addAgency = async (req, res) => {
   const { name, agency_notes, contacts, address } = req.body;
 
@@ -13,10 +127,13 @@ exports.addAgency = async (req, res) => {
   }
 
   const client = await db.connect();
+  const contactResults = [];
+  const emailFailures = [];
+
   try {
     await client.query('BEGIN');
 
-    // Include status and updated_at explicitly
+    // Create agency
     const agencyResult = await client.query(
       `INSERT INTO agencies (name, agency_notes, address, status, updated_at)
        VALUES ($1, $2, $3, 'Active', CURRENT_DATE) RETURNING id`,
@@ -24,53 +141,133 @@ exports.addAgency = async (req, res) => {
     );
     const agencyId = agencyResult.rows[0].id;
 
+    // Process each contact
     for (const contact of contacts) {
       const { full_name, email, phone_number } = contact;
-
       const tempPassword = generatePassword();
       const hashedPassword = await bcrypt.hash(tempPassword, 10);
       const userId = uuidv4();
-
       const randomDigits = Math.floor(100 + Math.random() * 900);
       const username = full_name.toLowerCase().replace(/\s+/g, '_') + randomDigits;
 
+      // Create user
       await client.query(
         `INSERT INTO users (id, username, full_name, email, phone_number, password_hash, is_agency_user)
          VALUES ($1, $2, $3, $4, $5, $6, true)`,
         [userId, username, full_name, email, phone_number, hashedPassword]
       );
 
+      // Create agency contact mapping
       await client.query(
         `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
         [agencyId, userId]
       );
 
-      await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
-         VALUES ($1, $2, $3, $4, $5)`,
-        ['ADD', 'AGENCY', agencyId, req.user.id, `Created agency "${name}"`]
-      );
+      contactResults.push({
+        userId,
+        email,
+        full_name,
+        tempPassword,
+        emailSent: false
+      });
+    }
 
+    // Log agency creation
+    await client.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_int_id, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['ADD', 'AGENCY', agencyId, req.user.id, `Created agency "${name}" with ${contacts.length} contacts`]
+    );
+
+    // Commit database transaction FIRST
+    await client.query('COMMIT');
+    console.log(`Agency ${name} created successfully with ${contacts.length} contacts`);
+
+    // THEN attempt to send emails to all contacts (non-critical)
+    for (const contactResult of contactResults) {
       try {
-        await sendTempPasswordEmail(email, tempPassword);
+        await sendTempPasswordEmail(contactResult.email, contactResult.tempPassword);
+        contactResult.emailSent = true;
+        console.log(`Password email sent successfully to ${contactResult.email}`);
       } catch (emailErr) {
-        console.error(`Failed to send email to ${email}:`, emailErr.message);
+        contactResult.emailSent = false;
+        contactResult.emailError = emailErr.message;
+        emailFailures.push({
+          email: contactResult.email,
+          error: emailErr.message,
+          tempPassword: contactResult.tempPassword
+        });
+        
+        console.error(`Failed to send email to ${contactResult.email}:`, emailErr.message);
+        console.log(`MANUAL DELIVERY NEEDED - Password for ${contactResult.email}: ${contactResult.tempPassword}`);
+        
+        // Log email failure
+        await db.query(
+          `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
+           VALUES ($1, $2, $3, $4, $5)`,
+          ['EMAIL_FAILED', 'CONTACT', contactResult.userId, req.user.id, 
+           `Email delivery failed for ${contactResult.email}. Manual delivery required. Error: ${emailErr.message}`]
+        );
       }
     }
 
-    await client.query('COMMIT');
-    return res.status(201).json({ success: true, message: 'Agency and contacts added successfully' });
+    // Prepare response
+    const emailsSent = contactResults.filter(c => c.emailSent).length;
+    const emailsFailed = contactResults.filter(c => !c.emailSent).length;
+
+    const responseData = {
+      success: true,
+      message: `Agency and contacts added successfully. ${emailsSent} emails sent, ${emailsFailed} failed.`,
+      agency: {
+        id: agencyId,
+        name: name,
+        contacts_created: contactResults.length
+      },
+      email_delivery: {
+        total_contacts: contactResults.length,
+        emails_sent: emailsSent,
+        emails_failed: emailsFailed,
+        failures: emailFailures.map(f => ({
+          email: f.email,
+          error: f.error
+        }))
+      }
+    };
+
+    // Include temp passwords in response if in development and there were failures
+    if (emailsFailed > 0 && process.env.NODE_ENV !== 'production') {
+      responseData.manual_delivery_passwords = emailFailures.map(f => ({
+        email: f.email,
+        temp_password: f.tempPassword
+      }));
+    }
+
+    return res.status(201).json(responseData);
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(err);
-    return res.status(500).json({ success: false, message: 'Server error', error: err.message });
+    console.error('Error creating agency:', err);
+
+    const errorResponse = {
+      success: false,
+      message: 'Server error',
+      error: err.message
+    };
+
+    // Include created temp passwords for manual delivery if needed
+    if (contactResults.length > 0 && process.env.NODE_ENV !== 'production') {
+      errorResponse.partial_contact_passwords = contactResults.map(c => ({
+        email: c.email,
+        temp_password: c.tempPassword
+      }));
+      errorResponse.manual_delivery_note = 'If any users were created before error, manual password delivery may be needed';
+    }
+
+    return res.status(500).json(errorResponse);
   } finally {
     client.release();
   }
 };
-
-  
 
 // Admin updates agency info (including status)
 exports.updateAgency = async (req, res) => {
@@ -161,58 +358,6 @@ exports.updateAgency = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Update failed', error: err.message });
   }
 };
-
-// Add a new contact person to an existing agency
-exports.addContactPerson = async (req, res) => {
-    const agencyId = req.params.id;
-    const { full_name, email, phone_number } = req.body;
-  
-    if (!full_name || !email || !phone_number) {
-      return res.status(400).json({ success: false, message: 'Missing required fields' });
-    }
-  
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-  
-      const tempPassword = generatePassword();
-      const hashedPassword = await bcrypt.hash(tempPassword, 10);
-      const userId = uuidv4();
-      const username = `${full_name.split(' ')[0].toLowerCase()}${Math.floor(Math.random() * 900 + 100)}`;
-  
-      await client.query(
-        `INSERT INTO users (id, full_name, username, email, phone_number, password_hash, is_agency_user)
-         VALUES ($1, $2, $3, $4, $5, $6, true)`,
-        [userId, full_name, username, email, phone_number, hashedPassword]
-      );
-
-      await client.query(
-        `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
-         VALUES ($1, $2, $3, $4, $5)`,
-        ['ADD', 'CONTACT', userId, req.user.id, `Added contact ${email} to agency ${agencyId}`]
-      );
-      
-      
-  
-      await client.query(
-        `INSERT INTO agency_contacts (agency_id, user_id) VALUES ($1, $2)`,
-        [agencyId, userId]
-      );
-  
-      await sendTempPasswordEmail(email, tempPassword);
-      await client.query('COMMIT');
-  
-      console.log(`[Admin:${req.user.id}] Added contact ${email} to agency ${agencyId}`);
-      return res.status(201).json({ success: true, message: 'Contact person added' });
-  
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(err);
-      return res.status(500).json({ success: false, message: 'Add contact failed', error: err.message });
-    } finally {
-      client.release();
-    }
-  };
   
   // Delete a contact person from an agency (removes mapping + user if agency user)
   exports.deleteContactPerson = async (req, res) => {

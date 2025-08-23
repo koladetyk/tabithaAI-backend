@@ -3,33 +3,41 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
-const sgMail = require('@sendgrid/mail');
 const db = require('../config/database');
 
 // Initialize Google OAuth client
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Initialize SendGrid
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const { Resend } = require('resend');
+
+// Initialize Resend
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 class AuthController {
   constructor() {
-    // Debug SendGrid environment variables
-    console.log('SENDGRID_API_KEY present?', !!process.env.SENDGRID_API_KEY);
+    // Debug Resend environment variables
+    console.log('RESEND_API_KEY present?', !!process.env.RESEND_API_KEY);
     console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
-    if (process.env.SENDGRID_API_KEY) {
-      console.log('SENDGRID_API_KEY starts with SG?', process.env.SENDGRID_API_KEY.startsWith('SG.'));
+    if (process.env.RESEND_API_KEY) {
+      console.log('RESEND_API_KEY starts with re_?', process.env.RESEND_API_KEY.startsWith('re_'));
     }
   }
 
-  // Helper method to send reset email - Fixed method binding
+  // Helper method to send reset email using Resend
   async sendResetEmail(email, resetToken) {
     try {
-      const msg = {
-        to: email,
+      if (!process.env.RESEND_API_KEY) {
+        throw new Error('RESEND_API_KEY is not configured');
+      }
+      
+      if (!process.env.FROM_EMAIL) {
+        throw new Error('FROM_EMAIL is not configured');
+      }
+
+      const response = await resend.emails.send({
         from: process.env.FROM_EMAIL,
+        to: email,
         subject: 'Tabitha AI - Password Reset Code',
-        text: `Your password reset code is: ${resetToken}. This code will expire in 15 minutes.`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -60,15 +68,132 @@ class AuthController {
               </p>
             </div>
           </div>
-        `
-      };
+        `,
+        text: `Your password reset code is: ${resetToken}. This code will expire in 15 minutes.`
+      });
       
-      await sgMail.send(msg);
       console.log(`Password reset email sent to: ${email}`);
-      return true;
+      console.log(`Email ID: ${response.data?.id || 'unknown'}`);
+      return response;
     } catch (error) {
       console.error('Error sending reset email:', error);
       throw error;
+    }
+  }
+
+  // ENHANCED: Request password reset with Resend email support
+  async requestPasswordReset(req, res) {
+    try {
+      console.log('=== PASSWORD RESET DEBUG ===');
+      console.log('RESEND_API_KEY present?', !!process.env.RESEND_API_KEY);
+      console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
+      console.log('================================');
+      
+      const { email, phone_number } = req.body;
+        
+      if (!email && !phone_number) {
+        return res.status(400).json({
+          success: false,
+          message: 'Either email or phone number is required'
+        });
+      }
+      
+      // Find user by email or phone
+      let userQuery = 'SELECT * FROM users WHERE ';
+      let queryParam;
+      let isEmailReset = false;
+      
+      if (email) {
+        userQuery += 'email = $1';
+        queryParam = email;
+        isEmailReset = true;
+      } else {
+        userQuery += 'phone_number = $1';
+        queryParam = phone_number;
+        isEmailReset = false;
+      }
+      
+      const user = await db.query(userQuery, [queryParam]);
+      
+      if (user.rows.length === 0) {
+        // Don't reveal if user doesn't exist for security
+        if (isEmailReset) {
+          return res.status(200).json({
+            success: true,
+            message: 'If a user with this email exists, a reset code has been sent'
+          });
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'SMS password reset is not implemented yet. Please use email or contact support.',
+            feature_status: 'not_implemented'
+          });
+        }
+      }
+      
+      // Handle phone-only users (no email)
+      if (!isEmailReset && !user.rows[0].email) {
+        return res.status(400).json({
+          success: false,
+          message: 'SMS password reset is not implemented yet. Please add an email to your account or contact support.',
+          feature_status: 'not_implemented',
+          suggestion: 'Please add an email address to your profile to enable password reset'
+        });
+      }
+      
+      // Generate reset token
+      const resetToken = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+      const resetTokenExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+      
+      // Store reset token
+      await db.query(
+        'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+        [resetToken, resetTokenExpires, user.rows[0].id]
+      );
+      
+      if (isEmailReset) {
+        // Send email using Resend
+        try {
+          await this.sendResetEmail(user.rows[0].email, resetToken);
+          console.log(`Password reset email sent successfully to: ${user.rows[0].email}`);
+          
+          return res.status(200).json({
+            success: true,
+            message: 'Password reset code has been sent to your email',
+            delivery_method: 'email'
+          });
+        } catch (emailError) {
+          console.error('Failed to send reset email:', emailError);
+          
+          // Clear the reset token if email fails
+          await db.query(
+            'UPDATE users SET reset_token = NULL, reset_token_expires = NULL WHERE id = $1',
+            [user.rows[0].id]
+          );
+          
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to send reset email. Please try again later.',
+            error_type: 'email_delivery_failed',
+            error_details: process.env.NODE_ENV !== 'production' ? emailError.message : undefined
+          });
+        }
+      } else {
+        // Phone number provided but SMS not implemented
+        return res.status(400).json({
+          success: false,
+          message: 'SMS password reset is not implemented yet. Please use your email address instead.',
+          feature_status: 'not_implemented',
+          user_email: user.rows[0].email ? 'available' : 'not_set'
+        });
+      }
+    } catch (error) {
+      console.error('Error requesting password reset:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error requesting password reset',
+        error: error.message
+      });
     }
   }
 
@@ -767,126 +892,6 @@ async register(req, res) {
       });
     } finally {
       client.release(); // Release client back to pool
-    }
-  }
-  
-
-  // ENHANCED: Request password reset with SendGrid email support
-  async requestPasswordReset(req, res) {
-    try {
-       // Debug logging
-    console.log('=== PASSWORD RESET DEBUG ===');
-    console.log('this:', typeof this);
-    console.log('this.sendResetEmail:', typeof this.sendResetEmail);
-    console.log('SENDGRID_API_KEY present?', !!process.env.SENDGRID_API_KEY);
-    console.log('FROM_EMAIL present?', !!process.env.FROM_EMAIL);
-    console.log('================================');
-    
-    const { email, phone_number } = req.body;
-      
-      if (!email && !phone_number) {
-        return res.status(400).json({
-          success: false,
-          message: 'Either email or phone number is required'
-        });
-      }
-      
-      // Find user by email or phone
-      let userQuery = 'SELECT * FROM users WHERE ';
-      let queryParam;
-      let isEmailReset = false;
-      
-      if (email) {
-        userQuery += 'email = $1';
-        queryParam = email;
-        isEmailReset = true;
-      } else {
-        userQuery += 'phone_number = $1';
-        queryParam = phone_number;
-        isEmailReset = false;
-      }
-      
-      const user = await db.query(userQuery, [queryParam]);
-      
-      if (user.rows.length === 0) {
-        // Don't reveal if user doesn't exist for security
-        if (isEmailReset) {
-          return res.status(200).json({
-            success: true,
-            message: 'If a user with this email exists, a reset code has been sent'
-          });
-        } else {
-          return res.status(400).json({
-            success: false,
-            message: 'SMS password reset is not implemented yet. Please use email or contact support.',
-            feature_status: 'not_implemented'
-          });
-        }
-      }
-      
-      // Handle phone-only users (no email)
-      if (!isEmailReset && !user.rows[0].email) {
-        return res.status(400).json({
-          success: false,
-          message: 'SMS password reset is not implemented yet. Please add an email to your account or contact support.',
-          feature_status: 'not_implemented',
-          suggestion: 'Please add an email address to your profile to enable password reset'
-        });
-      }
-      
-      // Generate reset token
-      const resetToken = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-      const resetTokenExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-      
-      // Store reset token
-      await db.query(
-        'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
-        [resetToken, resetTokenExpires, user.rows[0].id]
-      );
-      
-      if (isEmailReset) {
-        // Send email using SendGrid - Fixed method call
-        try {
-          // Use the instance method correctly
-          await this.sendResetEmail(user.rows[0].email, resetToken);
-          console.log(`Password reset email sent to: ${user.rows[0].email}`);
-          
-          return res.status(200).json({
-            success: true,
-            message: 'Password reset code has been sent to your email',
-            delivery_method: 'email'
-          });
-        } catch (emailError) {
-          console.error('Failed to send reset email:', emailError);
-          
-          // Clear the reset token if email fails
-          await db.query(
-            'UPDATE users SET reset_token = NULL, reset_token_expires = NULL WHERE id = $1',
-            [user.rows[0].id]
-          );
-          
-          return res.status(500).json({
-            success: false,
-            message: 'Failed to send reset email. Please try again later.',
-            error_type: 'email_delivery_failed'
-          });
-        }
-      } else {
-        // Phone number provided but SMS not implemented
-        return res.status(400).json({
-          success: false,
-          message: 'SMS password reset is not implemented yet. Please use your email address instead.',
-          feature_status: 'not_implemented',
-          user_email: user.rows[0].email ? 'available' : 'not_set'
-        });
-      }
-    } catch (error) {
-      console.error('Error requesting password reset:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error requesting password reset',
-        error: error.message
-      });
     }
   }
 
