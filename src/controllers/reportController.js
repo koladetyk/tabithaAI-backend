@@ -1591,106 +1591,106 @@ async getLatestReferredReports(req, res) {
       });
     }
   }
+  
+// Updated updateReportStatus method in ReportController.js
 
-
-  // Update your updateReportStatus method in ReportController.js
-
-  async updateReportStatus(req, res) {
-    try {
-      const reportId = req.params.id;
-      let { status } = req.body;
-      
-      // Normalize the status (trim whitespace and convert to lowercase)
-      status = status?.toString().trim().toLowerCase();
-      
-      // Define valid statuses (all lowercase for comparison)
-      const validStatuses = [
-        'submitted', 
-        'under_review', 
-        'in_progress', 
-        'resolved', 
-        'closed', 
-        'archived',
-        'pending',        // Add common alternative
-        'completed',      // Add common alternative
-        'open'           // Add common alternative
-      ];
-      
-      // Map common alternatives to your standard statuses
-      const statusMappings = {
-        'pending': 'submitted',
-        'completed': 'resolved',
-        'open': 'submitted'
-      };
-      
-      // Apply mapping if needed
-      const mappedStatus = statusMappings[status] || status;
-      
-      if (!validStatuses.includes(status) && !validStatuses.includes(mappedStatus)) {
-        console.log('Invalid status received:', req.body.status); // Debug log
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status "${req.body.status}". Status must be one of: submitted, under_review, in_progress, resolved, closed, archived`
-        });
-      }
-      
-      const finalStatus = mappedStatus;
-      
-      // Check if report exists
-      const existingReport = await db.query(
-        'SELECT * FROM reports WHERE id = $1',
-        [reportId]
-      );
-      
-      if (existingReport.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check permissions
-      if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to update this report status'
-        });
-      }
-      
-      // Update report status
-      const updatedReport = await db.query(
-        `UPDATE reports SET
-          status = $1,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-        RETURNING *`,
-        [finalStatus, reportId]
-      );
-      
-      // Send notification if user isn't anonymous and status has changed
-      if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
-        await notificationService.sendReportStatusNotification(
-          existingReport.rows[0].user_id,
-          reportId,
-          finalStatus
-        );
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: updatedReport.rows[0],
-        message: `Report status updated to "${finalStatus}" successfully`
-      });
-    } catch (error) {
-      console.error('Error updating report status:', error);
-      console.error('Request body:', req.body); // Debug log
-      return res.status(500).json({
+async updateReportStatus(req, res) {
+  try {
+    const reportId = req.params.id;
+    let { status } = req.body;
+    
+    // Normalize the status (trim whitespace and convert to lowercase)
+    status = status?.toString().trim().toLowerCase();
+    
+    // Define valid statuses (all lowercase for comparison) - UPDATED to use "processing"
+    const validStatuses = [
+      'submitted', 
+      'processing',      // Changed from 'in_progress'
+      'under_review', 
+      'resolving',       // Changed from 'in_progress'
+      'completed',       // Changed from 'resolved'
+      'archived',
+      'pending',        // Add common alternative
+      'open'           // Add common alternative
+    ];
+    
+    // Map common alternatives to your standard statuses
+    const statusMappings = {
+      'pending': 'submitted',
+      'in_progress': 'processing',  // Map old status to new one
+      'resolved': 'completed',      // Map old status to new one
+      'closed': 'completed',        // Map closed to completed
+      'open': 'submitted'
+    };
+    
+    // Apply mapping if needed
+    const mappedStatus = statusMappings[status] || status;
+    
+    if (!validStatuses.includes(status) && !validStatuses.includes(mappedStatus)) {
+      console.log('Invalid status received:', req.body.status); // Debug log
+      return res.status(400).json({
         success: false,
-        message: 'Server error updating report status',
-        error: error.message
+        message: `Invalid status "${req.body.status}". Status must be one of: submitted, processing, under_review, resolving, completed, archived`
       });
     }
+    
+    const finalStatus = mappedStatus;
+    
+    // Check if report exists
+    const existingReport = await db.query(
+      'SELECT * FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (existingReport.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+    
+    // Check permissions
+    if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this report status'
+      });
+    }
+    
+    // Update report status
+    const updatedReport = await db.query(
+      `UPDATE reports SET
+        status = $1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *`,
+      [finalStatus, reportId]
+    );
+    
+    // Send notification if user isn't anonymous and status has changed
+    if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
+      await notificationService.sendReportStatusNotification(
+        existingReport.rows[0].user_id,
+        reportId,
+        finalStatus
+      );
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: updatedReport.rows[0],
+      message: `Report status updated to "${finalStatus}" successfully`
+    });
+  } catch (error) {
+    console.error('Error updating report status:', error);
+    console.error('Request body:', req.body); // Debug log
+    return res.status(500).json({
+      success: false,
+      message: 'Server error updating report status',
+      error: error.message
+    });
   }
+}
 
 
 }
