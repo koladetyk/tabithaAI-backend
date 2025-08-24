@@ -11,6 +11,9 @@ const fileUpload = require('../middleware/optimizedFileUpload');
 // Get all reports (admin only)
 router.get('/', isAuthenticated, isAdmin, reportController.getAllReports);
 
+// Get reports by verification token only (no email needed)
+router.get('/guest/token/:token', reportController.getGuestReportsByToken);
+
 // Get reports by email for guest users (no authentication required)
 router.get('/guest/email/:email', reportController.getGuestReportsByEmail);
 
