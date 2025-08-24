@@ -961,7 +961,7 @@ exports.getReferredReportsForAgency = async (req, res) => {
     const result = await db.query(
       `SELECT 
         r.*,
-        rep.title as report_title,
+        rep.title,  -- Changed from "rep.title as report_title"
         rep.incident_type,
         rep.incident_description
        FROM referrals r
