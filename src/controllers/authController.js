@@ -142,9 +142,14 @@ class AuthController {
     }
   }
 
-  // Register new user with email OR phone number (address optional)
+// Register new user with email OR phone number (address optional)
+// ENHANCED: Links anonymous reports to new user account
 async register(req, res) {
+  const client = await db.connect();
+  
   try {
+    await client.query('BEGIN');
+    
     console.log('Register request received:', {
       body: req.body,
       headers: {
@@ -157,6 +162,7 @@ async register(req, res) {
     
     // Validate that either email or phone is provided
     if (!email && !phone_number) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'Either email or phone number is required'
@@ -164,6 +170,7 @@ async register(req, res) {
     }
     
     if (!password || !full_name) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'Password and full name are required'
@@ -190,9 +197,10 @@ async register(req, res) {
       queryParams.push(username);
     }
     
-    const existingUser = await db.query(existingUserQuery, queryParams);
+    const existingUser = await client.query(existingUserQuery, queryParams);
     
     if (existingUser.rows.length > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         message: 'User already exists with this email, phone number, or username'
@@ -205,7 +213,7 @@ async register(req, res) {
     
     // Create new user (including address field, even if null)
     const userId = uuidv4();
-    const newUser = await db.query(
+    const newUser = await client.query(
       `INSERT INTO users (
         id,
         username,
@@ -220,6 +228,65 @@ async register(req, res) {
       RETURNING id, username, email, phone_number, full_name, address, is_admin, profile_picture`,
       [userId, username, email, phone_number, hashedPassword, full_name, address || null]
     );
+    
+    // NEW: Link anonymous reports to this user
+    let linkedReports = [];
+    
+    // Find anonymous reports that match this user's email or phone number
+    let reportLinkQuery = `
+      SELECT r.id, r.title, r.contact_info, r.created_at 
+      FROM reports r 
+      WHERE r.anonymous = true 
+      AND r.user_id IS NULL 
+      AND (`;
+    
+    const reportQueryParams = [];
+    const conditions = [];
+    
+    if (email) {
+      conditions.push(`r.contact_info->>'email' = $${reportQueryParams.length + 1}`);
+      reportQueryParams.push(email);
+    }
+    
+    if (phone_number) {
+      conditions.push(`r.contact_info->>'phoneNumber' = $${reportQueryParams.length + 1}`);
+      reportQueryParams.push(phone_number);
+    }
+    
+    reportLinkQuery += conditions.join(' OR ') + ')';
+    
+    const matchingReports = await client.query(reportLinkQuery, reportQueryParams);
+    
+    if (matchingReports.rows.length > 0) {
+      // Update anonymous reports to link them to the new user
+      const reportIds = matchingReports.rows.map(report => report.id);
+      
+      const updateReportsResult = await client.query(
+        `UPDATE reports 
+         SET user_id = $1, 
+             anonymous = false, 
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ANY($2)
+         RETURNING id, title, created_at`,
+        [userId, reportIds]
+      );
+      
+      linkedReports = updateReportsResult.rows;
+      
+      console.log(`Linked ${linkedReports.length} anonymous reports to new user ${userId}`);
+      
+      // Also update any email verification records to link them to the user
+      if (email) {
+        await client.query(
+          `UPDATE report_email_verification 
+           SET user_id = $1, updated_at = CURRENT_TIMESTAMP
+           WHERE report_id = ANY($2) AND email = $3`,
+          [userId, reportIds, email]
+        );
+      }
+    }
+    
+    await client.query('COMMIT');
     
     // Generate JWT token
     const token = jwt.sign(
@@ -239,6 +306,23 @@ async register(req, res) {
     
     console.log('Register successful - cookie set');
     
+    // Send notification about linked reports if any
+    if (linkedReports.length > 0) {
+      try {
+        await notificationService.createAndSendNotification(
+          userId,
+          'Reports Linked to Account',
+          `${linkedReports.length} of your previous anonymous reports have been linked to your new account`,
+          'reports_linked',
+          'user_account',
+          userId
+        );
+      } catch (notificationError) {
+        console.error('Error sending linking notification:', notificationError);
+        // Continue even if notification fails
+      }
+    }
+    
     return res.status(201).json({
       success: true,
       user: {
@@ -250,15 +334,29 @@ async register(req, res) {
         address: newUser.rows[0].address,
         is_admin: newUser.rows[0].is_admin,
         profile_picture: newUser.rows[0].profile_picture
-      }
+      },
+      linkedReports: {
+        count: linkedReports.length,
+        reports: linkedReports.map(report => ({
+          id: report.id,
+          title: report.title,
+          created_at: report.created_at
+        }))
+      },
+      message: linkedReports.length > 0 
+        ? `Account created successfully! ${linkedReports.length} previous anonymous reports have been linked to your account.`
+        : 'Account created successfully!'
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error registering user:', error);
     return res.status(500).json({
       success: false,
       message: 'Server error registering user',
       error: error.message
     });
+  } finally {
+    client.release();
   }
 }
   
