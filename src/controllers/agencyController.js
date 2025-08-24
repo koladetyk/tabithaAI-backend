@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 const generatePassword = require('../utils/generatePassword');
 const sendTempPasswordEmail = require('../utils/sendTempPasswordEmail'); // optional but recommended
 
-// Add a new contact person to an existing agency - IMPROVED ERROR HANDLING
+// Add a new contact person to an existing agency - IMPROVED ERROR HANDLING + DUPLICATE CHECK
 exports.addContactPerson = async (req, res) => {
   const agencyId = req.params.id;
   const { full_name, email, phone_number } = req.body;
@@ -19,6 +19,28 @@ exports.addContactPerson = async (req, res) => {
 
   try {
     await client.query('BEGIN');
+
+    // Check if user already exists with this email or phone number
+    const existingUserCheck = await client.query(
+      'SELECT id, email, phone_number, full_name FROM users WHERE email = $1 OR phone_number = $2',
+      [email, phone_number]
+    );
+
+    if (existingUserCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      const existingUser = existingUserCheck.rows[0];
+      return res.status(409).json({ 
+        success: false, 
+        message: `User already exists with ${existingUser.email === email ? 'email' : 'phone number'}: ${existingUser.email === email ? email : phone_number}`,
+        existing_user: {
+          id: existingUser.id,
+          full_name: existingUser.full_name,
+          email: existingUser.email,
+          phone_number: existingUser.phone_number
+        },
+        error_type: 'duplicate_user'
+      });
+    }
 
     tempPassword = generatePassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
@@ -100,25 +122,44 @@ exports.addContactPerson = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('Error in addContactPerson:', err);
     
-    // If we have the temp password, include it in error response for manual delivery
+    // Enhanced error handling
+    let errorMessage = 'Add contact failed';
+    let statusCode = 500;
+    
+    // Check for specific PostgreSQL errors
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.detail.includes('email')) {
+        errorMessage = 'A user with this email address already exists';
+        statusCode = 409;
+      } else if (err.detail.includes('phone_number')) {
+        errorMessage = 'A user with this phone number already exists';
+        statusCode = 409;
+      } else if (err.detail.includes('username')) {
+        errorMessage = 'Username already exists (this is auto-generated, please try again)';
+        statusCode = 409;
+      }
+    }
+    
     const errorResponse = {
       success: false,
-      message: 'Add contact failed',
-      error: err.message
+      message: errorMessage,
+      error: err.message,
+      error_code: err.code || 'UNKNOWN'
     };
 
+    // Include temp password for manual delivery if user was created but something else failed
     if (tempPassword && process.env.NODE_ENV !== 'production') {
       errorResponse.temp_password_for_manual_delivery = tempPassword;
       errorResponse.manual_delivery_note = `If user was created, manual password delivery needed for ${email}`;
     }
 
-    return res.status(500).json(errorResponse);
+    return res.status(statusCode).json(errorResponse);
   } finally {
     client.release();
   }
 };
 
-// Admin adds agency and contacts - IMPROVED ERROR HANDLING
+// Admin adds agency and contacts - IMPROVED ERROR HANDLING + DUPLICATE CHECK
 exports.addAgency = async (req, res) => {
   const { name, agency_notes, contacts, address } = req.body;
 
@@ -129,9 +170,46 @@ exports.addAgency = async (req, res) => {
   const client = await db.connect();
   const contactResults = [];
   const emailFailures = [];
+  const duplicateUsers = [];
 
   try {
     await client.query('BEGIN');
+
+    // Pre-check for duplicate users before creating agency
+    for (const contact of contacts) {
+      const { email, phone_number } = contact;
+      
+      const existingUserCheck = await client.query(
+        'SELECT id, email, phone_number, full_name FROM users WHERE email = $1 OR phone_number = $2',
+        [email, phone_number]
+      );
+
+      if (existingUserCheck.rows.length > 0) {
+        const existingUser = existingUserCheck.rows[0];
+        duplicateUsers.push({
+          input_email: email,
+          input_phone: phone_number,
+          existing_user: {
+            id: existingUser.id,
+            full_name: existingUser.full_name,
+            email: existingUser.email,
+            phone_number: existingUser.phone_number
+          },
+          conflict_type: existingUser.email === email ? 'email' : 'phone_number'
+        });
+      }
+    }
+
+    // If we found duplicates, rollback and return error
+    if (duplicateUsers.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: `Cannot create agency. Found ${duplicateUsers.length} existing user(s) with duplicate email/phone numbers.`,
+        duplicate_users: duplicateUsers,
+        error_type: 'duplicate_users_in_contacts'
+      });
+    }
 
     // Create agency
     const agencyResult = await client.query(
@@ -141,7 +219,7 @@ exports.addAgency = async (req, res) => {
     );
     const agencyId = agencyResult.rows[0].id;
 
-    // Process each contact
+    // Process each contact (now safe since we pre-checked for duplicates)
     for (const contact of contacts) {
       const { full_name, email, phone_number } = contact;
       const tempPassword = generatePassword();
@@ -248,10 +326,25 @@ exports.addAgency = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('Error creating agency:', err);
 
+    // Enhanced error handling for specific database errors
+    let errorMessage = 'Server error';
+    let statusCode = 500;
+    
+    if (err.code === '23505') { // Unique constraint violation
+      if (err.detail.includes('email')) {
+        errorMessage = 'One or more contacts have duplicate email addresses';
+        statusCode = 409;
+      } else if (err.detail.includes('phone_number')) {
+        errorMessage = 'One or more contacts have duplicate phone numbers';
+        statusCode = 409;
+      }
+    }
+
     const errorResponse = {
       success: false,
-      message: 'Server error',
-      error: err.message
+      message: errorMessage,
+      error: err.message,
+      error_code: err.code || 'UNKNOWN'
     };
 
     // Include created temp passwords for manual delivery if needed
@@ -263,7 +356,7 @@ exports.addAgency = async (req, res) => {
       errorResponse.manual_delivery_note = 'If any users were created before error, manual password delivery may be needed';
     }
 
-    return res.status(500).json(errorResponse);
+    return res.status(statusCode).json(errorResponse);
   } finally {
     client.release();
   }
