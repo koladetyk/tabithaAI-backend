@@ -143,7 +143,7 @@ class AuthController {
   }
 
 // Register new user with email OR phone number (address optional)
-// ENHANCED: Links anonymous reports to new user account
+// ENHANCED: Smart handling of anonymous reports vs existing users
 async register(req, res) {
   const client = await db.connect();
   
@@ -177,7 +177,8 @@ async register(req, res) {
       });
     }
     
-    // Check if user already exists with email or phone
+    // UPDATED LOGIC: Only check for existing USERS, not anonymous reports
+    // Check if user already exists with email or phone IN THE USERS TABLE
     let existingUserQuery = 'SELECT * FROM users WHERE ';
     const queryParams = [];
     
@@ -198,7 +199,8 @@ async register(req, res) {
     }
     
     const existingUser = await client.query(existingUserQuery, queryParams);
-    
+
+    // Block registration ONLY if user already exists in users table
     if (existingUser.rows.length > 0) {
       await client.query('ROLLBACK');
       return res.status(400).json({
@@ -229,9 +231,6 @@ async register(req, res) {
       [userId, username, email, phone_number, hashedPassword, full_name, address || null]
     );
     
-    // NEW: Link anonymous reports to this user
-    let linkedReports = [];
-    
     // Find anonymous reports that match this user's email or phone number
     let reportLinkQuery = `
       SELECT r.id, r.title, r.contact_info, r.created_at 
@@ -257,6 +256,8 @@ async register(req, res) {
     
     const matchingReports = await client.query(reportLinkQuery, reportQueryParams);
     
+    let linkedReports = [];
+    
     if (matchingReports.rows.length > 0) {
       // Update anonymous reports to link them to the new user
       const reportIds = matchingReports.rows.map(report => report.id);
@@ -275,14 +276,15 @@ async register(req, res) {
       
       console.log(`Linked ${linkedReports.length} anonymous reports to new user ${userId}`);
       
-      // Also update any email verification records to link them to the user
+      // IMPORTANT: Remove guest access by deleting verification records
       if (email) {
-        await client.query(
-          `UPDATE report_email_verification 
-           SET user_id = $1, updated_at = CURRENT_TIMESTAMP
-           WHERE report_id = ANY($2) AND email = $3`,
-          [userId, reportIds, email]
+        const deletedVerifications = await client.query(
+          `DELETE FROM report_email_verification 
+           WHERE report_id = ANY($1) AND email = $2
+           RETURNING *`,
+          [reportIds, email]
         );
+        console.log(`Removed ${deletedVerifications.rows.length} verification records for ${email}`);
       }
     }
     
@@ -309,6 +311,7 @@ async register(req, res) {
     // Send notification about linked reports if any
     if (linkedReports.length > 0) {
       try {
+        const notificationService = require('../services/notificationService');
         await notificationService.createAndSendNotification(
           userId,
           'Reports Linked to Account',
@@ -343,8 +346,9 @@ async register(req, res) {
           created_at: report.created_at
         }))
       },
+      guestAccessRevoked: linkedReports.length > 0,
       message: linkedReports.length > 0 
-        ? `Account created successfully! ${linkedReports.length} previous anonymous reports have been linked to your account.`
+        ? `Account created successfully! ${linkedReports.length} previous anonymous reports have been linked to your account. Guest access codes have been revoked.`
         : 'Account created successfully!'
     });
   } catch (error) {
