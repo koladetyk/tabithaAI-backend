@@ -474,37 +474,37 @@ async getReportsByContact(req, res) {
         }
       }
       
-      // Create email verification for anonymous reports with email
-      let verificationCode = null;
-      if (anonymous && email) {
-        try {
-          // Use fixed verification code for testing
-          verificationCode = "12345";
-          
-          // Create verification record
-          await db.query(
-            `INSERT INTO report_email_verification (
-              id, 
-              report_id, 
-              email, 
-              verification_code,
-              expires_at
-            ) VALUES ($1, $2, $3, $4, $5)`,
-            [
-              uuidv4(),
-              reportId,
-              email,
-              verificationCode,
-              new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
-            ]
-          );
-          
-          console.log(`TEST MODE: Using fixed verification code "12345" for ${email}`);
-        } catch (verificationError) {
-          console.error('Error creating email verification:', verificationError);
-          // Continue even if verification creation fails
-        }
-      }
+     // Create email verification for anonymous reports with random 5-digit token
+  let verificationCode = null;
+  if (anonymous && email) {
+    try {
+      // Generate random 5-digit verification code
+      verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
+      
+      // Create verification record
+      await db.query(
+        `INSERT INTO report_email_verification (
+          id, 
+          report_id, 
+          email, 
+          verification_code,
+          expires_at
+        ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          uuidv4(),
+          reportId,
+          email,
+          verificationCode,
+          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+        ]
+      );
+      
+      console.log(`Generated verification code "${verificationCode}" for ${email}`);
+    } catch (verificationError) {
+      console.error('Error creating email verification:', verificationError);
+      // Continue even if verification creation fails
+    }
+  }
       
       // Handle audio files array
       const evidenceItems = [];
@@ -672,13 +672,14 @@ async getReportsByContact(req, res) {
       };
       
       // Add verification code to response if this is an anonymous report with email
-      if (anonymous && email && verificationCode) {
-        responseData.verificationInfo = {
-          email: email,
-          verificationCode: verificationCode,
-          message: "Please save this verification code to access your report in the future."
-        };
-      }
+  if (anonymous && email && verificationCode) {
+    responseData.verificationInfo = {
+      email: email,
+      verificationCode: verificationCode,
+      message: "Please save this 5-digit code to access your report in the future.",
+      accessInstructions: "Visit our website and use 'Check Report Status' with your email and this code"
+    };
+  }
       
       return res.status(201).json(responseData);
     } catch (error) {
@@ -889,33 +890,36 @@ async getReportsByContact(req, res) {
         }
       }
       
-      // Create email verification record
-      let verificationCode = "12345";  // Fixed code for testing
+      // Create email verification record with RANDOM 5-digit code
+    let verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+    try {
+      // Generate random 5-digit verification code
+      verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
       
-      try {
-        // Create verification record
-        await db.query(
-          `INSERT INTO report_email_verification (
-            id, 
-            report_id, 
-            email, 
-            verification_code,
-            expires_at
-          ) VALUES ($1, $2, $3, $4, $5)`,
-          [
-            uuidv4(),
-            reportId,
-            email,
-            verificationCode,
-            new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
-          ]
-        );
-        
-        console.log(`TEST MODE: Using fixed verification code "12345" for ${email}`);
-      } catch (verificationError) {
-        console.error('Error creating email verification:', verificationError);
-        // Continue even if verification creation fails
-      }
+      // Create verification record
+      await db.query(
+        `INSERT INTO report_email_verification (
+          id, 
+          report_id, 
+          email, 
+          verification_code,
+          expires_at
+        ) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          uuidv4(),
+          reportId,
+          email,
+          verificationCode,
+          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+        ]
+      );
+      
+      console.log(`Generated verification code "${verificationCode}" for ${email}`);
+    } catch (verificationError) {
+      console.error('Error creating email verification:', verificationError);
+      // Continue even if verification creation fails
+    }
       
       // Handle audio files array
       const evidenceItems = [];
@@ -1070,8 +1074,8 @@ async getReportsByContact(req, res) {
         verificationInfo: {
           email: email,
           verificationCode: verificationCode,
-          message: "Please save this verification code to access your report in the future.",
-          accessUrl: `/api/v1/reports/guest/email/${email}?code=${verificationCode}`
+          message: "Please save this 5-digit code to access your report in the future.",
+          accessInstructions: "Visit our website and use 'Check Report Status' with your email and this code"
         },
         message: `Guest report created successfully with ${evidenceItems.length} evidence items`
       };
@@ -1110,84 +1114,68 @@ async getReportsByContact(req, res) {
     }
   }  
 
-  // Get reports by email for guest users
-  async getGuestReportsByEmail(req, res) {
-    try {
-      const email = req.params.email;
-      const emailVerificationCode = req.query.code;
-      
-      // Check if verification code is provided
-      if (!emailVerificationCode) {
-        return res.status(400).json({
-          success: false,
-          message: 'Verification code is required'
-        });
-      }
-      
-      // SIMPLIFIED FOR TESTING: Allow "12345" as a universal code
-      if (emailVerificationCode === "12345") {
-        // Find reports associated with this email
-        const reports = await db.query(
-          `SELECT r.* FROM reports r
-           JOIN report_email_verification v ON r.id = v.report_id
-           WHERE v.email = $1
-           ORDER BY r.created_at DESC`,
-          [email]
-        );
-        
-        // Also include evidence with each report
-        if (reports.rows.length > 0) {
-          // Fetch evidence for each report
-          for (let i = 0; i < reports.rows.length; i++) {
-            const evidence = await db.query(
-              'SELECT * FROM evidence WHERE report_id = $1',
-              [reports.rows[i].id]
-            );
-            reports.rows[i].evidence = evidence.rows;
-          }
-        }
-        
-        return res.status(200).json({
-          success: true,
-          count: reports.rows.length,
-          data: reports.rows
-        });
-      }
-      
-      // If not using the test code, proceed with normal verification
-      const reports = await db.query(
-        `SELECT r.* FROM reports r
-         JOIN report_email_verification v ON r.id = v.report_id
-         WHERE v.email = $1 AND v.verification_code = $2
-         ORDER BY r.created_at DESC`,
-        [email, emailVerificationCode]
-      );
-      
-      // Include evidence with each report
-      if (reports.rows.length > 0) {
-        for (let i = 0; i < reports.rows.length; i++) {
-          const evidence = await db.query(
-            'SELECT * FROM evidence WHERE report_id = $1',
-            [reports.rows[i].id]
-          );
-          reports.rows[i].evidence = evidence.rows;
-        }
-      }
-      
-      return res.status(200).json({
-        success: true,
-        count: reports.rows.length,
-        data: reports.rows
-      });
-    } catch (error) {
-      console.error('Error fetching guest reports by email:', error);
-      return res.status(500).json({
+// Get reports by email for guest users
+async getGuestReportsByEmail(req, res) {
+  try {
+    const email = req.params.email;
+    const emailVerificationCode = req.query.code;
+    
+    // Check if verification code is provided
+    if (!emailVerificationCode) {
+      return res.status(400).json({
         success: false,
-        message: 'Server error retrieving reports',
-        error: error.message
+        message: 'Verification code is required'
       });
     }
+    
+    // Validate verification code format (should be 5 digits)
+    if (!/^\d{5}$/.test(emailVerificationCode)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verification code format. Please provide a 5-digit code.'
+      });
+    }
+    
+    // Find reports with matching email and verification code
+    const reports = await db.query(
+      `SELECT r.* FROM reports r
+       JOIN report_email_verification v ON r.id = v.report_id
+       WHERE v.email = $1 AND v.verification_code = $2 AND v.expires_at > NOW()
+       ORDER BY r.created_at DESC`,
+      [email, emailVerificationCode]
+    );
+    
+    if (reports.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No reports found with this email and verification code, or the code has expired.'
+      });
+    }
+    
+    // Include evidence with each report
+    for (let i = 0; i < reports.rows.length; i++) {
+      const evidence = await db.query(
+        'SELECT * FROM evidence WHERE report_id = $1',
+        [reports.rows[i].id]
+      );
+      reports.rows[i].evidence = evidence.rows;
+    }
+    
+    return res.status(200).json({
+      success: true,
+      count: reports.rows.length,
+      data: reports.rows,
+      message: `Found ${reports.rows.length} report(s) for ${email}`
+    });
+  } catch (error) {
+    console.error('Error fetching guest reports by email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving reports',
+      error: error.message
+    });
   }
+}
 
   // Public access: read-only report info
   async getPublicReportById(req, res) {
