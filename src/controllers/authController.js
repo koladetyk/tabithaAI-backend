@@ -251,40 +251,55 @@ async register(req, res) {
       conditions.push(`r.contact_info->>'phoneNumber' = $${reportQueryParams.length + 1}`);
       reportQueryParams.push(phone_number);
     }
-    
-    reportLinkQuery += conditions.join(' OR ') + ')';
-    
-    const matchingReports = await client.query(reportLinkQuery, reportQueryParams);
-    
-    let linkedReports = [];
-    
-    if (matchingReports.rows.length > 0) {
-      // Update anonymous reports to link them to the new user
-      const reportIds = matchingReports.rows.map(report => report.id);
-      
-      const updateReportsResult = await client.query(
-        `UPDATE reports 
-         SET user_id = $1, 
-             anonymous = false, 
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ANY($2)
-         RETURNING id, title, created_at`,
-        [userId, reportIds]
-      );
-      
-      linkedReports = updateReportsResult.rows;
-      
-      console.log(`Linked ${linkedReports.length} anonymous reports to new user ${userId}`);
-      
-     // IMPORTANT: Remove guest access by deleting verification records
-      const deletedVerifications = await client.query(
-        `DELETE FROM report_email_verification 
-        WHERE report_id = ANY($1) AND (email = $2 OR phone_number = $3)
-        RETURNING *`,
-        [reportIds, email || null, phone_number || null]
-      );
-      console.log(`Removed ${deletedVerifications.rows.length} verification records`);
-    }
+
+   reportLinkQuery += conditions.join(' OR ') + ')';
+
+console.log('DEBUG - Report linking query:', reportLinkQuery);
+console.log('DEBUG - Report query params:', reportQueryParams);
+
+const matchingReports = await client.query(reportLinkQuery, reportQueryParams);
+
+console.log('DEBUG - Found matching reports:', matchingReports.rows.length);
+console.log('DEBUG - Matching reports contact_info:', matchingReports.rows.map(r => r.contact_info));
+
+let linkedReports = [];
+
+if (matchingReports.rows.length > 0) {
+  // Update anonymous reports to link them to the new user
+  const reportIds = matchingReports.rows.map(report => report.id);
+  
+  const updateReportsResult = await client.query(
+    `UPDATE reports 
+     SET user_id = $1, 
+         anonymous = false, 
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ANY($2)
+     RETURNING id, title, created_at`,
+    [userId, reportIds]
+  );
+  
+  linkedReports = updateReportsResult.rows;
+  
+  console.log(`Linked ${linkedReports.length} anonymous reports to new user ${userId}`);
+  
+  // Add debugging for the DELETE query
+  console.log('DEBUG - About to delete verification records for:', {
+    reportIds,
+    email: email || null,
+    phone_number: phone_number || null
+  });
+  
+  // IMPORTANT: Remove guest access by deleting verification records
+  const deletedVerifications = await client.query(
+    `DELETE FROM report_email_verification 
+    WHERE report_id = ANY($1) AND (email = $2 OR phone_number = $3)
+    RETURNING *`,
+    [reportIds, email || null, phone_number || null]
+  );
+  
+  console.log('DEBUG - Deleted verification records:', deletedVerifications.rows);
+  console.log(`Removed ${deletedVerifications.rows.length} verification records`);
+}
     
     await client.query('COMMIT');
     
