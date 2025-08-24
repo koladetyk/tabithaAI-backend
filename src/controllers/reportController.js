@@ -760,18 +760,34 @@ async getReportsByContact(req, res) {
 // Create a new report as a guest user (with email OR phone number)
 async createGuestReport(req, res) {
   try {
+    // Add this debug logging first
+    console.log('DEBUG - Full request body:', req.body);
+    
     const {
-      audio_files,        // Array of {title, uri, transcription}
-      images_videos,      // Array of {title, uri}
-      note,              // Optional text note
-      email,             // Email OR phoneNumber required
-      phoneNumber,       // Email OR phoneNumber required  
-      address,           // Optional contact info
+      audio_files,        
+      images_videos,      
+      note,              
+      email,             
+      phoneNumber: phoneNumberCamel,    // Handle camelCase
+      phone_number: phoneNumberSnake,   // Handle snake_case      // Make sure this matches your request
+      address,           
       incident_date,
       incident_type,
       language,
       confidentiality_level
     } = req.body;
+
+    // Use whichever one was provided
+    const phoneNumber = phoneNumberCamel || phoneNumberSnake;
+    
+    // Add this debug logging after destructuring
+    console.log('DEBUG - Destructured values:', {
+      email,
+      phoneNumber,
+      address
+    });
+    
+    // Rest of your method...
     
     // Either email OR phone is required for guest reports
     if (!email && !phoneNumber) {
@@ -908,9 +924,9 @@ async createGuestReport(req, res) {
           uuidv4(),
           reportId,
           email || null,
-          phoneNumber || null,
+          phoneNumber || null,  // This should work - make sure phoneNumber is the correct variable
           verificationCode,
-          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
         ]
       );
       
