@@ -276,16 +276,14 @@ async register(req, res) {
       
       console.log(`Linked ${linkedReports.length} anonymous reports to new user ${userId}`);
       
-      // IMPORTANT: Remove guest access by deleting verification records
-      if (email) {
-        const deletedVerifications = await client.query(
-          `DELETE FROM report_email_verification 
-           WHERE report_id = ANY($1) AND email = $2
-           RETURNING *`,
-          [reportIds, email]
-        );
-        console.log(`Removed ${deletedVerifications.rows.length} verification records for ${email}`);
-      }
+     // IMPORTANT: Remove guest access by deleting verification records
+      const deletedVerifications = await client.query(
+        `DELETE FROM report_email_verification 
+        WHERE report_id = ANY($1) AND (email = $2 OR phone_number = $3)
+        RETURNING *`,
+        [reportIds, email || null, phone_number || null]
+      );
+      console.log(`Removed ${deletedVerifications.rows.length} verification records`);
     }
     
     await client.query('COMMIT');
