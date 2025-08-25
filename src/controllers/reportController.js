@@ -97,7 +97,7 @@ async getAllReports(req, res) {
     }
     
     // Add pagination
-    query += ' ORDER BY submitted_date DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
+    query += ' ORDER BY created_at DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
     queryParams.push(limit, offset);
     
     // Execute queries
