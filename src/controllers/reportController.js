@@ -96,7 +96,7 @@ async getAllReports(req, res) {
       countQuery += ' WHERE ' + conditions.join(' AND ');
     }
     
-    // Add pagination
+    // Add pagination - FIXED: changed submitted_date to created_at
     query += ' ORDER BY created_at DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
     queryParams.push(limit, offset);
     
@@ -106,15 +106,59 @@ async getAllReports(req, res) {
       db.query(countQuery, queryParams.slice(0, -2)) // Remove limit and offset for count
     ]);
     
-    // Get evidence summaries for all reports
+    // Get evidence summaries for all reports - FIXED: Direct implementation
     const reportIds = reports.rows.map(report => report.id);
-    const evidenceSummaries = await evidenceController.getEvidenceSummaryForReports(reportIds);
+    let reportsWithEvidence = reports.rows;
     
-    // Add evidence summaries to reports
-    const reportsWithEvidence = reports.rows.map(report => ({
-      ...report,
-      evidenceSummary: evidenceSummaries[report.id] || { total: 0, images: 0, audios: 0, videos: 0, documents: 0 }
-    }));
+    if (reportIds.length > 0) {
+      // Get evidence counts for each report
+      const evidenceQuery = `
+        SELECT 
+          report_id,
+          evidence_type,
+          COUNT(*) as count
+        FROM evidence 
+        WHERE report_id = ANY($1)
+        GROUP BY report_id, evidence_type
+      `;
+      
+      const evidenceResult = await db.query(evidenceQuery, [reportIds]);
+      
+      // Build evidence summary for each report
+      const evidenceSummaries = {};
+      
+      // Initialize summaries
+      reportIds.forEach(reportId => {
+        evidenceSummaries[reportId] = { 
+          total: 0, images: 0, audios: 0, videos: 0, documents: 0 
+        };
+      });
+      
+      // Populate summaries from query results
+      evidenceResult.rows.forEach(row => {
+        const { report_id, evidence_type, count } = row;
+        const numCount = parseInt(count);
+        evidenceSummaries[report_id].total += numCount;
+        
+        if (evidence_type === 'image') {
+          evidenceSummaries[report_id].images = numCount;
+        } else if (evidence_type === 'audio') {
+          evidenceSummaries[report_id].audios = numCount;
+        } else if (evidence_type === 'video') {
+          evidenceSummaries[report_id].videos = numCount;
+        } else {
+          evidenceSummaries[report_id].documents = numCount;
+        }
+      });
+      
+      // Add evidence summaries to reports
+      reportsWithEvidence = reports.rows.map(report => ({
+        ...report,
+        evidenceSummary: evidenceSummaries[report.id] || { 
+          total: 0, images: 0, audios: 0, videos: 0, documents: 0 
+        }
+      }));
+    }
     
     return res.status(200).json({
       success: true,
