@@ -7,9 +7,7 @@ const evidenceController = require('./evidenceController');
 
 class ReportController {
   
-
-  // Update your getReportById method to include evidence with URLs
-// Update your getReportById method to include evidence with URLs
+// Fixed getReportById method with proper URL generation and error handling
 async getReportById(req, res) {
   try {
     const reportId = req.params.id;
@@ -27,7 +25,7 @@ async getReportById(req, res) {
       });
     }
     
-    // Check if user has permission to view this report
+    // Check permissions
     if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
       return res.status(403).json({
         success: false,
@@ -35,20 +33,58 @@ async getReportById(req, res) {
       });
     }
     
-    // Get evidence for this report with URLs and categorization
-    const evidenceResult = await evidenceController.getEvidenceForReportDetails(
-      reportId, 
-      req.user.id, 
-      req.user.is_admin
+    // Get evidence
+    const evidenceResult = await db.query(
+      'SELECT * FROM evidence WHERE report_id = $1 ORDER BY submitted_date DESC',
+      [reportId]
     );
     
-    // Return report with evidence
+    // Process each evidence item to generate URLs if files exist
+    const processedEvidence = await Promise.all(
+      evidenceResult.rows.map(async (evidence) => {
+        if (evidence.file_url) {
+          try {
+            // Try to generate signed URL
+            const signedUrl = await storageService.getSignedUrl(evidence.file_url);
+            return {
+              ...evidence,
+              viewUrl: signedUrl,
+              downloadUrl: signedUrl,
+              error: null
+            };
+          } catch (storageError) {
+            // File doesn't exist - return evidence data with error
+            return {
+              ...evidence,
+              viewUrl: null,
+              downloadUrl: null,
+              error: "File not found"
+            };
+          }
+        } else {
+          // No file URL - likely a URI-only evidence
+          return {
+            ...evidence,
+            viewUrl: evidence.metadata?.uri || null,
+            downloadUrl: null,
+            error: evidence.metadata?.uri ? null : "File not found"
+          };
+        }
+      })
+    );
+    
     return res.status(200).json({
       success: true,
       data: {
         ...report.rows[0],
-        evidence: evidenceResult.evidence,
-        evidenceSummary: evidenceResult.summary
+        evidence: processedEvidence,
+        evidenceSummary: {
+          total: processedEvidence.length,
+          images: processedEvidence.filter(e => e.evidence_type === 'image').length,
+          audios: processedEvidence.filter(e => e.evidence_type === 'audio').length,
+          videos: processedEvidence.filter(e => e.evidence_type === 'video').length,
+          documents: processedEvidence.filter(e => e.evidence_type === 'document').length
+        }
       }
     });
   } catch (error) {
@@ -56,6 +92,693 @@ async getReportById(req, res) {
     return res.status(500).json({
       success: false,
       message: 'Server error fetching report',
+      error: error.message
+    });
+  }
+}
+
+// Fixed createReport method with proper metadata (no contact info in evidence metadata)
+async createReport(req, res) {
+  try {
+    const {
+      audio_files,        
+      images_videos,      
+      note,              
+      email,             
+      phoneNumber,       
+      address,           
+      incident_date,
+      incident_type,
+      language,
+      anonymous,
+      confidentiality_level
+    } = req.body;
+    
+    // Validate required contact info
+    if (!email && !phoneNumber && !address) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one contact method (email, phoneNumber, or address) is required'
+      });
+    }
+    
+    // Parse arrays if they come as strings (from form data)
+    let parsedAudioFiles = [];
+    let parsedImagesVideos = [];
+    
+    try {
+      parsedAudioFiles = typeof audio_files === 'string' ? JSON.parse(audio_files) : (audio_files || []);
+      parsedImagesVideos = typeof images_videos === 'string' ? JSON.parse(images_videos) : (images_videos || []);
+    } catch (parseError) {
+      console.log('Parse error for arrays, using empty arrays:', parseError.message);
+    }
+    
+    // Generate new UUID for report
+    const reportId = uuidv4();
+    
+    // Process with AI if there's a note or audio transcriptions
+    let aiProcessed = false;
+    let emotionalContext = null;
+    let aiResult = null;
+    let processingTime = null;
+    
+    // Combine text for AI analysis
+    let textToAnalyze = note || '';
+    if (parsedAudioFiles.length > 0) {
+      const transcriptions = parsedAudioFiles
+        .filter(audio => audio.transcription)
+        .map(audio => audio.transcription)
+        .join(' ');
+      textToAnalyze += ' ' + transcriptions;
+    }
+    
+    if (textToAnalyze.trim()) {
+      // Use enhanced AI service with Llama3
+      aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
+      
+      if (aiResult) {
+        aiProcessed = true;
+        emotionalContext = aiResult.emotionalContext || null;
+        processingTime = aiResult.processingTime || null;
+      }
+    }
+    
+    // Determine incident type from AI if not provided
+    const finalIncidentType = incident_type || 
+                            (aiResult?.structuredData?.incidentType || 'general incident');
+    
+    // Create contact info object
+    const contactInfo = {
+      email: email || null,
+      phoneNumber: phoneNumber || null,
+      address: address || null
+    };
+
+    const title = `Case-${reportId.slice(0, 8)}`;
+    
+    // Create new report in database
+    const newReport = await db.query(
+      `INSERT INTO reports (
+        id, 
+        title,
+        user_id, 
+        incident_date, 
+        location_data, 
+        incident_type, 
+        incident_description,
+        language,
+        anonymous,
+        confidentiality_level,
+        original_input_type,
+        ai_processed,
+        emotional_context,
+        contact_info
+      ) VALUES (
+        $1, 
+        $2, 
+        $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      ) RETURNING *`,
+      [
+        reportId,
+        title,
+        anonymous ? null : req.user?.id,
+        incident_date || new Date(),
+        address ? { address } : {},
+        finalIncidentType,
+        note || textToAnalyze || 'Report with media files',
+        language || 'en',
+        anonymous || false,
+        confidentiality_level || 1,
+        parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
+        aiProcessed,
+        emotionalContext,
+        contactInfo
+      ]
+    );
+    
+    // Record the AI interaction AFTER report creation
+    if (aiResult) {
+      try {
+        await recordInteraction(
+          anonymous ? null : req.user?.id,
+          reportId,
+          'array_structure_processing',
+          textToAnalyze.substring(0, 200),
+          JSON.stringify(aiResult),
+          aiResult.confidence || 0.7,
+          processingTime,
+          'llama3'
+        );
+      } catch (interactionError) {
+        console.error('Error recording AI interaction:', interactionError);
+        // Continue even if recording fails
+      }
+    }
+    
+    // Create email verification for anonymous reports with random 5-digit token
+    let verificationCode = null;
+    if (anonymous && email) {
+      try {
+        // Generate random 5-digit verification code
+        verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
+        
+        // Create verification record
+        await db.query(
+          `INSERT INTO report_email_verification (
+            id, 
+            report_id, 
+            email, 
+            verification_code,
+            expires_at
+          ) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            uuidv4(),
+            reportId,
+            email,
+            verificationCode,
+            new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
+          ]
+        );
+        
+        console.log(`Generated verification code "${verificationCode}" for ${email}`);
+      } catch (verificationError) {
+        console.error('Error creating email verification:', verificationError);
+        // Continue even if verification creation fails
+      }
+    }
+    
+    // Handle audio files array - FIXED metadata
+    const evidenceItems = [];
+    for (const audioFile of parsedAudioFiles) {
+      const evidenceId = uuidv4();
+      
+      const newEvidence = await db.query(
+        `INSERT INTO evidence (
+          id,
+          report_id,
+          evidence_type,
+          file_path,
+          file_url,
+          description,
+          submitted_date,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+        [
+          evidenceId,
+          reportId,
+          'audio',
+          audioFile.title || 'Audio File',
+          audioFile.uri || null,
+          audioFile.title || 'Audio evidence',
+          {
+            title: audioFile.title,
+            uri: audioFile.uri,
+            transcription: audioFile.transcription,
+            source_type: 'uri_provided'
+          }
+        ]
+      );
+      
+      evidenceItems.push(newEvidence.rows[0]);
+    }
+    
+    // Handle images/videos array - FIXED metadata
+    for (const mediaFile of parsedImagesVideos) {
+      const evidenceId = uuidv4();
+      
+      // Determine type based on file extension or assume image
+      let evidenceType = 'image';
+      if (mediaFile.uri) {
+        const uri = mediaFile.uri.toLowerCase();
+        if (uri.includes('.mp4') || uri.includes('.mov') || uri.includes('.avi')) {
+          evidenceType = 'video';
+        }
+      }
+      
+      const newEvidence = await db.query(
+        `INSERT INTO evidence (
+          id,
+          report_id,
+          evidence_type,
+          file_path,
+          file_url,
+          description,
+          submitted_date,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+        [
+          evidenceId,
+          reportId,
+          evidenceType,
+          mediaFile.title || 'Media File',
+          mediaFile.uri || null,
+          mediaFile.title || 'Media evidence',
+          {
+            title: mediaFile.title,
+            uri: mediaFile.uri,
+            source_type: 'uri_provided'
+          }
+        ]
+      );
+      
+      evidenceItems.push(newEvidence.rows[0]);
+    }
+    
+    // Handle uploaded files if any - FIXED metadata
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const evidenceId = uuidv4();
+        
+        // Determine evidence type based on file mime type
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        // Upload file to cloud storage
+        const fileUrl = await storageService.uploadFile(
+          file,
+          req.user?.id || null,
+          reportId,
+          evidenceType
+        );
+        
+        // Create evidence record
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date,
+            metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname,
+            fileUrl,
+            `Uploaded ${evidenceType}: ${file.originalname}`,
+            {
+              original_name: file.originalname,
+              file_size: file.size,
+              mime_type: file.mimetype,
+              upload_timestamp: new Date().toISOString(),
+              source_type: 'file_upload'
+            }
+          ]
+        );
+        
+        evidenceItems.push(newEvidence.rows[0]);
+      }
+    }
+    
+    // Create notification for non-anonymous reports
+    if (!anonymous && req.user?.id) {
+      await notificationService.createAndSendNotification(
+        req.user.id,
+        'Report Submitted',
+        'Your report has been successfully submitted',
+        'report_created',
+        'report',
+        reportId
+      );
+    }
+    
+    // Prepare response
+    const responseData = {
+      success: true,
+      data: {
+        report: {
+              ...newReport.rows[0],
+               title
+             },
+        evidence: evidenceItems,
+        audio_files_processed: parsedAudioFiles.length,
+        images_videos_processed: parsedImagesVideos.length,
+        uploaded_files_processed: req.files?.length || 0
+      },
+      aiAnalysis: aiResult ? {
+        suggestedServices: aiResult.suggestedServices,
+        recommendations: aiResult.recommendations,
+        riskLevel: aiResult.structuredData?.riskLevel
+      } : null,
+      message: `Report created successfully with ${evidenceItems.length} evidence items`
+    };
+    
+    // Add verification code to response if this is an anonymous report with email
+    if (anonymous && email && verificationCode) {
+      responseData.verificationInfo = {
+        email: email,
+        verificationCode: verificationCode,
+        message: "Please save this 5-digit code to access your report in the future.",
+        accessInstructions: "Visit our website and use 'Check Report Status' with your email and this code"
+      };
+    }
+    
+    return res.status(201).json(responseData);
+  } catch (error) {
+    console.error('Error creating report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating report',
+      error: error.message
+    });
+  }
+}
+
+// Fixed createGuestReport method with proper metadata (no contact info in evidence metadata)
+async createGuestReport(req, res) {
+  try {
+    console.log('DEBUG - Full request body:', req.body);
+    
+    const {
+      audio_files,        
+      images_videos,      
+      note,              
+      email,             
+      phoneNumber: phoneNumberCamel,    
+      phone_number: phoneNumberSnake,   
+      address,           
+      incident_date,
+      incident_type,
+      language,
+      confidentiality_level
+    } = req.body;
+
+    const phoneNumber = phoneNumberCamel || phoneNumberSnake;
+    
+    console.log('DEBUG - Destructured values:', {
+      email,
+      phoneNumber,
+      address
+    });
+    
+    if (!email && !phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either email or phone number is required for guest reports'
+      });
+    }
+    
+    let parsedAudioFiles = [];
+    let parsedImagesVideos = [];
+    
+    try {
+      parsedAudioFiles = typeof audio_files === 'string' ? JSON.parse(audio_files) : (audio_files || []);
+      parsedImagesVideos = typeof images_videos === 'string' ? JSON.parse(images_videos) : (images_videos || []);
+    } catch (parseError) {
+      console.log('Parse error for arrays, using empty arrays:', parseError.message);
+    }
+    
+    const reportId = uuidv4();
+    
+    // AI processing (same as before)
+    let aiProcessed = false;
+    let emotionalContext = null;
+    let aiResult = null;
+    let processingTime = null;
+    
+    let textToAnalyze = note || '';
+    if (parsedAudioFiles.length > 0) {
+      const transcriptions = parsedAudioFiles
+        .filter(audio => audio.transcription)
+        .map(audio => audio.transcription)
+        .join(' ');
+      textToAnalyze += ' ' + transcriptions;
+    }
+    
+    if (textToAnalyze.trim()) {
+      aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
+      
+      if (aiResult) {
+        aiProcessed = true;
+        emotionalContext = aiResult.emotionalContext || null;
+        processingTime = aiResult.processingTime || null;
+      }
+    }
+    
+    const finalIncidentType = incident_type || 
+                            (aiResult?.structuredData?.incidentType || 'general incident');
+    
+    const contactInfo = {
+      email: email || null,
+      phoneNumber: phoneNumber || null,
+      address: address || null
+    };
+
+    const title = `Case-${reportId.slice(0, 8)}`;
+    
+    // Create new report in database
+    const newReport = await db.query(
+      `INSERT INTO reports (
+        id, 
+        title,
+        user_id, 
+        incident_date, 
+        location_data, 
+        incident_type, 
+        incident_description,
+        language,
+        anonymous,
+        confidentiality_level,
+        original_input_type,
+        ai_processed,
+        emotional_context,
+        contact_info
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [
+        reportId,
+        title,
+        null,  
+        incident_date || new Date(),
+        address ? { address } : {},
+        finalIncidentType,
+        note || textToAnalyze || 'Guest report with media files',
+        language || 'en',
+        true,  
+        confidentiality_level || 1,
+        parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
+        aiProcessed,
+        emotionalContext,
+        contactInfo
+      ]
+    );
+    
+    // Record AI interaction if applicable (same as before)
+    if (aiResult) {
+      try {
+        await recordInteraction(
+          null,  
+          reportId,
+          'guest_array_processing',
+          textToAnalyze.substring(0, 200),
+          JSON.stringify(aiResult),
+          aiResult.confidence || 0.7,
+          processingTime,
+          'llama3'
+        );
+      } catch (interactionError) {
+        console.error('Error recording AI interaction:', interactionError);
+      }
+    }
+    
+    // Generate verification code
+    let verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+    try {
+      await db.query(
+        `INSERT INTO report_email_verification (
+          id, 
+          report_id, 
+          email, 
+          phone_number,
+          verification_code,
+          expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          uuidv4(),
+          reportId,
+          email || null,
+          phoneNumber || null,  
+          verificationCode,
+          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+        ]
+      );
+      
+      console.log(`Generated verification code "${verificationCode}" for ${email || phoneNumber}`);
+    } catch (verificationError) {
+      console.error('Error creating email verification:', verificationError);
+    }
+    
+    // Handle audio files - FIXED metadata
+    const evidenceItems = [];
+    for (const audioFile of parsedAudioFiles) {
+      const evidenceId = uuidv4();
+      
+      const newEvidence = await db.query(
+        `INSERT INTO evidence (
+          id,
+          report_id,
+          evidence_type,
+          file_path,
+          file_url,
+          description,
+          submitted_date,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+        [
+          evidenceId,
+          reportId,
+          'audio',
+          audioFile.title || 'Audio File',
+          audioFile.uri || null,
+          audioFile.title || 'Audio evidence',
+          {
+            title: audioFile.title,
+            uri: audioFile.uri,
+            transcription: audioFile.transcription,
+            source_type: 'uri_provided'
+          }
+        ]
+      );
+      
+      evidenceItems.push(newEvidence.rows[0]);
+    }
+    
+    // Handle images/videos - FIXED metadata
+    for (const mediaFile of parsedImagesVideos) {
+      const evidenceId = uuidv4();
+      
+      let evidenceType = 'image';
+      if (mediaFile.uri) {
+        const uri = mediaFile.uri.toLowerCase();
+        if (uri.includes('.mp4') || uri.includes('.mov') || uri.includes('.avi')) {
+          evidenceType = 'video';
+        }
+      }
+      
+      const newEvidence = await db.query(
+        `INSERT INTO evidence (
+          id,
+          report_id,
+          evidence_type,
+          file_path,
+          file_url,
+          description,
+          submitted_date,
+          metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+        [
+          evidenceId,
+          reportId,
+          evidenceType,
+          mediaFile.title || 'Media File',
+          mediaFile.uri || null,
+          mediaFile.title || 'Media evidence',
+          {
+            title: mediaFile.title,
+            uri: mediaFile.uri,
+            source_type: 'uri_provided'
+          }
+        ]
+      );
+      
+      evidenceItems.push(newEvidence.rows[0]);
+    }
+    
+    // Handle uploaded files - FIXED metadata
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const evidenceId = uuidv4();
+        
+        let evidenceType = 'document';
+        if (file.mimetype.startsWith('image/')) {
+          evidenceType = 'image';
+        } else if (file.mimetype.startsWith('audio/')) {
+          evidenceType = 'audio';
+        } else if (file.mimetype.startsWith('video/')) {
+          evidenceType = 'video';
+        }
+        
+        const fileUrl = await storageService.uploadFile(
+          file,
+          null,  
+          reportId,
+          evidenceType
+        );
+        
+        const newEvidence = await db.query(
+          `INSERT INTO evidence (
+            id,
+            report_id,
+            evidence_type,
+            file_path,
+            file_url,
+            description,
+            submitted_date,
+            metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+          [
+            evidenceId,
+            reportId,
+            evidenceType,
+            file.originalname,
+            fileUrl,
+            `Uploaded ${evidenceType}: ${file.originalname}`,
+            {
+              original_name: file.originalname,
+              file_size: file.size,
+              mime_type: file.mimetype,
+              upload_timestamp: new Date().toISOString(),
+              source_type: 'file_upload'
+            }
+          ]
+        );
+        
+        evidenceItems.push(newEvidence.rows[0]);
+      }
+    }
+    
+    const responseData = {
+      success: true,
+      data: {
+        report: {
+             ...newReport.rows[0],
+             title
+           },
+        evidence: evidenceItems,
+        audio_files_processed: parsedAudioFiles.length,
+        images_videos_processed: parsedImagesVideos.length,
+        uploaded_files_processed: req.files?.length || 0
+      },
+      aiAnalysis: aiResult ? {
+        suggestedServices: aiResult.suggestedServices,
+        recommendations: aiResult.recommendations,
+        riskLevel: aiResult.structuredData?.riskLevel
+      } : null,
+      verificationInfo: {
+        contact: email || phoneNumber,
+        verificationCode: verificationCode,
+        message: "Please save this 5-digit code to access your report in the future.",
+        accessInstructions: `Use the code ${verificationCode} to access your report.`
+      },
+      message: `Guest report created successfully with ${evidenceItems.length} evidence items`
+    };
+    
+    return res.status(201).json(responseData);
+  } catch (error) {
+    console.error('Error creating guest report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating guest report',
       error: error.message
     });
   }
@@ -380,362 +1103,6 @@ async getReportsByContact(req, res) {
     }
   }
 
-  // ENHANCED: Create new report with array structure as per your requirements
-  async createReport(req, res) {
-    try {
-      const {
-        audio_files,        // Array of {title, uri, transcription}
-        images_videos,      // Array of {title, uri}
-        note,              // Optional text note
-        email,             // Required contact info
-        phoneNumber,       // Required contact info  
-        address,           // Required contact info
-        incident_date,
-        incident_type,
-        language,
-        anonymous,
-        confidentiality_level
-      } = req.body;
-      
-      // Validate required contact info
-      if (!email && !phoneNumber && !address) {
-        return res.status(400).json({
-          success: false,
-          message: 'At least one contact method (email, phoneNumber, or address) is required'
-        });
-      }
-      
-      // Parse arrays if they come as strings (from form data)
-      let parsedAudioFiles = [];
-      let parsedImagesVideos = [];
-      
-      try {
-        parsedAudioFiles = typeof audio_files === 'string' ? JSON.parse(audio_files) : (audio_files || []);
-        parsedImagesVideos = typeof images_videos === 'string' ? JSON.parse(images_videos) : (images_videos || []);
-      } catch (parseError) {
-        console.log('Parse error for arrays, using empty arrays:', parseError.message);
-      }
-      
-      // Generate new UUID for report
-      const reportId = uuidv4();
-      
-      // Process with AI if there's a note or audio transcriptions
-      let aiProcessed = false;
-      let emotionalContext = null;
-      let aiResult = null;
-      let processingTime = null;
-      
-      // Combine text for AI analysis
-      let textToAnalyze = note || '';
-      if (parsedAudioFiles.length > 0) {
-        const transcriptions = parsedAudioFiles
-          .filter(audio => audio.transcription)
-          .map(audio => audio.transcription)
-          .join(' ');
-        textToAnalyze += ' ' + transcriptions;
-      }
-      
-      if (textToAnalyze.trim()) {
-        // Use enhanced AI service with Llama3
-        aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
-        
-        if (aiResult) {
-          aiProcessed = true;
-          emotionalContext = aiResult.emotionalContext || null;
-          processingTime = aiResult.processingTime || null;
-        }
-      }
-      
-      // Determine incident type from AI if not provided
-      const finalIncidentType = incident_type || 
-                              (aiResult?.structuredData?.incidentType || 'general incident');
-      
-      // Create contact info object
-      const contactInfo = {
-        email: email || null,
-        phoneNumber: phoneNumber || null,
-        address: address || null
-      };
-
-      const title = `Case-${reportId.slice(0, 8)}`;
-      
-      // Create new report in database
-      const newReport = await db.query(
-        `INSERT INTO reports (
-          id, 
-          title,
-          user_id, 
-          incident_date, 
-          location_data, 
-          incident_type, 
-          incident_description,
-          language,
-          anonymous,
-          confidentiality_level,
-          original_input_type,
-          ai_processed,
-          emotional_context,
-          contact_info
-        ) VALUES (
-          $1, 
-          $2, 
-          $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-        ) RETURNING *`,
-        [
-          reportId,
-          title,
-          anonymous ? null : req.user?.id,
-          incident_date || new Date(),
-          address ? { address } : {},
-          finalIncidentType,
-          note || textToAnalyze || 'Report with media files',
-          language || 'en',
-          anonymous || false,
-          confidentiality_level || 1,
-          parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
-          aiProcessed,
-          emotionalContext,
-          contactInfo
-        ]
-      );
-      
-      // Record the AI interaction AFTER report creation
-      if (aiResult) {
-        try {
-          await recordInteraction(
-            anonymous ? null : req.user?.id,
-            reportId,
-            'array_structure_processing',
-            textToAnalyze.substring(0, 200),
-            JSON.stringify(aiResult),
-            aiResult.confidence || 0.7,
-            processingTime,
-            'llama3'
-          );
-        } catch (interactionError) {
-          console.error('Error recording AI interaction:', interactionError);
-          // Continue even if recording fails
-        }
-      }
-      
-     // Create email verification for anonymous reports with random 5-digit token
-  let verificationCode = null;
-  if (anonymous && email) {
-    try {
-      // Generate random 5-digit verification code
-      verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
-      
-      // Create verification record
-      await db.query(
-        `INSERT INTO report_email_verification (
-          id, 
-          report_id, 
-          email, 
-          verification_code,
-          expires_at
-        ) VALUES ($1, $2, $3, $4, $5)`,
-        [
-          uuidv4(),
-          reportId,
-          email,
-          verificationCode,
-          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) // 30 days expiration
-        ]
-      );
-      
-      console.log(`Generated verification code "${verificationCode}" for ${email}`);
-    } catch (verificationError) {
-      console.error('Error creating email verification:', verificationError);
-      // Continue even if verification creation fails
-    }
-  }
-      
-      // Handle audio files array
-      const evidenceItems = [];
-      for (const audioFile of parsedAudioFiles) {
-        const evidenceId = uuidv4();
-        
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date,
-            metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-          [
-            evidenceId,
-            reportId,
-            'audio',
-            audioFile.title || 'Audio File',
-            audioFile.uri || null,
-            audioFile.title || 'Audio evidence',
-            {
-              title: audioFile.title,
-              uri: audioFile.uri,
-              transcription: audioFile.transcription,
-              contact_info: contactInfo
-            }
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
-      }
-      
-      // Handle images/videos array
-      for (const mediaFile of parsedImagesVideos) {
-        const evidenceId = uuidv4();
-        
-        // Determine type based on file extension or assume image
-        let evidenceType = 'image';
-        if (mediaFile.uri) {
-          const uri = mediaFile.uri.toLowerCase();
-          if (uri.includes('.mp4') || uri.includes('.mov') || uri.includes('.avi')) {
-            evidenceType = 'video';
-          }
-        }
-        
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date,
-            metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-          [
-            evidenceId,
-            reportId,
-            evidenceType,
-            mediaFile.title || 'Media File',
-            mediaFile.uri || null,
-            mediaFile.title || 'Media evidence',
-            {
-              title: mediaFile.title,
-              uri: mediaFile.uri,
-              contact_info: contactInfo
-            }
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
-      }
-      
-      // Handle uploaded files if any (in addition to URIs)
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-          const evidenceId = uuidv4();
-          
-          // Determine evidence type based on file mime type
-          let evidenceType = 'document';
-          if (file.mimetype.startsWith('image/')) {
-            evidenceType = 'image';
-          } else if (file.mimetype.startsWith('audio/')) {
-            evidenceType = 'audio';
-          } else if (file.mimetype.startsWith('video/')) {
-            evidenceType = 'video';
-          }
-          
-          // Upload file to cloud storage
-          const fileUrl = await storageService.uploadFile(
-            file,
-            req.user?.id || null,
-            reportId,
-            evidenceType
-          );
-          
-          // Create evidence record
-          const newEvidence = await db.query(
-            `INSERT INTO evidence (
-              id,
-              report_id,
-              evidence_type,
-              file_path,
-              file_url,
-              description,
-              submitted_date,
-              metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-            [
-              evidenceId,
-              reportId,
-              evidenceType,
-              file.originalname,
-              fileUrl,
-              `Uploaded ${evidenceType}: ${file.originalname}`,
-              {
-                original_name: file.originalname,
-                file_size: file.size,
-                mime_type: file.mimetype,
-                contact_info: contactInfo
-              }
-            ]
-          );
-          
-          evidenceItems.push(newEvidence.rows[0]);
-        }
-      }
-      
-      // Create notification for non-anonymous reports
-      if (!anonymous && req.user?.id) {
-        await notificationService.createAndSendNotification(
-          req.user.id,
-          'Report Submitted',
-          'Your report has been successfully submitted',
-          'report_created',
-          'report',
-          reportId
-        );
-      }
-      
-      // Prepare response
-      const responseData = {
-        success: true,
-        data: {
-          report: {
-                ...newReport.rows[0],
-                 title
-               },
-          evidence: evidenceItems,
-          audio_files_processed: parsedAudioFiles.length,
-          images_videos_processed: parsedImagesVideos.length,
-          uploaded_files_processed: req.files?.length || 0
-        },
-        aiAnalysis: aiResult ? {
-          suggestedServices: aiResult.suggestedServices,
-          recommendations: aiResult.recommendations,
-          riskLevel: aiResult.structuredData?.riskLevel
-        } : null,
-        message: `Report created successfully with ${evidenceItems.length} evidence items`
-      };
-      
-      // Add verification code to response if this is an anonymous report with email
-  if (anonymous && email && verificationCode) {
-    responseData.verificationInfo = {
-      email: email,
-      verificationCode: verificationCode,
-      message: "Please save this 5-digit code to access your report in the future.",
-      accessInstructions: "Visit our website and use 'Check Report Status' with your email and this code"
-    };
-  }
-      
-      return res.status(201).json(responseData);
-    } catch (error) {
-      console.error('Error creating report:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error creating report',
-        error: error.message
-      });
-    }
-  }
-
   // ENHANCED: Create audio report (legacy endpoint - redirects to main createReport)
   async createAudioReport(req, res) {
     try {
@@ -801,354 +1168,6 @@ async getReportsByContact(req, res) {
     }
   }
 
-// Create a new report as a guest user (with email OR phone number)
-async createGuestReport(req, res) {
-  try {
-    // Add this debug logging first
-    console.log('DEBUG - Full request body:', req.body);
-    
-    const {
-      audio_files,        
-      images_videos,      
-      note,              
-      email,             
-      phoneNumber: phoneNumberCamel,    // Handle camelCase
-      phone_number: phoneNumberSnake,   // Handle snake_case      // Make sure this matches your request
-      address,           
-      incident_date,
-      incident_type,
-      language,
-      confidentiality_level
-    } = req.body;
-
-    // Use whichever one was provided
-    const phoneNumber = phoneNumberCamel || phoneNumberSnake;
-    
-    // Add this debug logging after destructuring
-    console.log('DEBUG - Destructured values:', {
-      email,
-      phoneNumber,
-      address
-    });
-    
-    // Rest of your method...
-    
-    // Either email OR phone is required for guest reports
-    if (!email && !phoneNumber) {
-      return res.status(400).json({
-        success: false,
-        message: 'Either email or phone number is required for guest reports'
-      });
-    }
-    
-    // Parse arrays if they come as strings (from form data)
-    let parsedAudioFiles = [];
-    let parsedImagesVideos = [];
-    
-    try {
-      parsedAudioFiles = typeof audio_files === 'string' ? JSON.parse(audio_files) : (audio_files || []);
-      parsedImagesVideos = typeof images_videos === 'string' ? JSON.parse(images_videos) : (images_videos || []);
-    } catch (parseError) {
-      console.log('Parse error for arrays, using empty arrays:', parseError.message);
-    }
-    
-    // Generate new UUID for report
-    const reportId = uuidv4();
-    
-    // Process with AI if there's a note or audio transcriptions
-    let aiProcessed = false;
-    let emotionalContext = null;
-    let aiResult = null;
-    let processingTime = null;
-    
-    // Combine text for AI analysis
-    let textToAnalyze = note || '';
-    if (parsedAudioFiles.length > 0) {
-      const transcriptions = parsedAudioFiles
-        .filter(audio => audio.transcription)
-        .map(audio => audio.transcription)
-        .join(' ');
-      textToAnalyze += ' ' + transcriptions;
-    }
-    
-    if (textToAnalyze.trim()) {
-      // Use enhanced AI service with Llama3
-      aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
-      
-      if (aiResult) {
-        aiProcessed = true;
-        emotionalContext = aiResult.emotionalContext || null;
-        processingTime = aiResult.processingTime || null;
-      }
-    }
-    
-    // Determine incident type from AI if not provided
-    const finalIncidentType = incident_type || 
-                            (aiResult?.structuredData?.incidentType || 'general incident');
-    
-    // Create contact info object
-    const contactInfo = {
-      email: email || null,
-      phoneNumber: phoneNumber || null,
-      address: address || null
-    };
-
-    const title = `Case-${reportId.slice(0, 8)}`;
-    
-    // Create new report in database - always anonymous for guest reports
-    const newReport = await db.query(
-      `INSERT INTO reports (
-        id, 
-        title,
-        user_id, 
-        incident_date, 
-        location_data, 
-        incident_type, 
-        incident_description,
-        language,
-        anonymous,
-        confidentiality_level,
-        original_input_type,
-        ai_processed,
-        emotional_context,
-        contact_info
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
-      [
-        reportId,
-        title,
-        null,  // Always null for guest reports
-        incident_date || new Date(),
-        address ? { address } : {},
-        finalIncidentType,
-        note || textToAnalyze || 'Guest report with media files',
-        language || 'en',
-        true,  // Always anonymous for guest reports
-        confidentiality_level || 1,
-        parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
-        aiProcessed,
-        emotionalContext,
-        contactInfo
-      ]
-    );
-    
-    // Record the AI interaction if applicable
-    if (aiResult) {
-      try {
-        await recordInteraction(
-          null,  // No user ID for guest reports
-          reportId,
-          'guest_array_processing',
-          textToAnalyze.substring(0, 200),
-          JSON.stringify(aiResult),
-          aiResult.confidence || 0.7,
-          processingTime,
-          'llama3'
-        );
-      } catch (interactionError) {
-        console.error('Error recording AI interaction:', interactionError);
-        // Continue even if recording fails
-      }
-    }
-    
-    // Generate random 5-digit verification code
-    let verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
-
-    try {
-      // Create verification record - store BOTH email and phone if provided
-      await db.query(
-        `INSERT INTO report_email_verification (
-          id, 
-          report_id, 
-          email, 
-          phone_number,
-          verification_code,
-          expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          uuidv4(),
-          reportId,
-          email || null,
-          phoneNumber || null,  // This should work - make sure phoneNumber is the correct variable
-          verificationCode,
-          new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
-        ]
-      );
-      
-      console.log(`Generated verification code "${verificationCode}" for ${email || phoneNumber}`);
-    } catch (verificationError) {
-      console.error('Error creating email verification:', verificationError);
-      // Continue even if verification creation fails
-    }
-    
-    // Handle audio files and media files (same as before)...
-    const evidenceItems = [];
-      for (const audioFile of parsedAudioFiles) {
-        const evidenceId = uuidv4();
-        
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date,
-            metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-          [
-            evidenceId,
-            reportId,
-            'audio',
-            audioFile.title || 'Audio File',
-            audioFile.uri || null,
-            audioFile.title || 'Audio evidence',
-            {
-              title: audioFile.title,
-              uri: audioFile.uri,
-              transcription: audioFile.transcription,
-              contact_info: contactInfo
-            }
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
-      }
-      
-      // Handle images/videos array
-      for (const mediaFile of parsedImagesVideos) {
-        const evidenceId = uuidv4();
-        
-        // Determine type based on file extension or assume image
-        let evidenceType = 'image';
-        if (mediaFile.uri) {
-          const uri = mediaFile.uri.toLowerCase();
-          if (uri.includes('.mp4') || uri.includes('.mov') || uri.includes('.avi')) {
-            evidenceType = 'video';
-          }
-        }
-        
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date,
-            metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-          [
-            evidenceId,
-            reportId,
-            evidenceType,
-            mediaFile.title || 'Media File',
-            mediaFile.uri || null,
-            mediaFile.title || 'Media evidence',
-            {
-              title: mediaFile.title,
-              uri: mediaFile.uri,
-              contact_info: contactInfo
-            }
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
-      }
-      
-      // Handle uploaded files if any (in addition to URIs)
-      if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-          const evidenceId = uuidv4();
-          
-          // Determine evidence type based on file mime type
-          let evidenceType = 'document';
-          if (file.mimetype.startsWith('image/')) {
-            evidenceType = 'image';
-          } else if (file.mimetype.startsWith('audio/')) {
-            evidenceType = 'audio';
-          } else if (file.mimetype.startsWith('video/')) {
-            evidenceType = 'video';
-          }
-          
-          // Upload file to cloud storage - use null for user_id
-          const fileUrl = await storageService.uploadFile(
-            file,
-            null,  // No user ID for guest reports
-            reportId,
-            evidenceType
-          );
-          
-          // Create evidence record
-          const newEvidence = await db.query(
-            `INSERT INTO evidence (
-              id,
-              report_id,
-              evidence_type,
-              file_path,
-              file_url,
-              description,
-              submitted_date,
-              metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-            [
-              evidenceId,
-              reportId,
-              evidenceType,
-              file.originalname,
-              fileUrl,
-              `Uploaded ${evidenceType}: ${file.originalname}`,
-              {
-                original_name: file.originalname,
-                file_size: file.size,
-                mime_type: file.mimetype,
-                contact_info: contactInfo
-              }
-            ]
-          );
-          
-          evidenceItems.push(newEvidence.rows[0]);
-        }
-      }
-      
-      // Prepare response
-    const responseData = {
-      success: true,
-      data: {
-        report: {
-             ...newReport.rows[0],
-             title
-           },
-        evidence: evidenceItems,
-        audio_files_processed: parsedAudioFiles.length,
-        images_videos_processed: parsedImagesVideos.length,
-        uploaded_files_processed: req.files?.length || 0
-      },
-      aiAnalysis: aiResult ? {
-        suggestedServices: aiResult.suggestedServices,
-        recommendations: aiResult.recommendations,
-        riskLevel: aiResult.structuredData?.riskLevel
-      } : null,
-      verificationInfo: {
-        contact: email || phoneNumber,
-        verificationCode: verificationCode,
-        message: "Please save this 5-digit code to access your report in the future.",
-        accessInstructions: `Use the code ${verificationCode} to access your report.`
-      },
-      message: `Guest report created successfully with ${evidenceItems.length} evidence items`
-    };
-    
-    return res.status(201).json(responseData);
-  } catch (error) {
-    console.error('Error creating guest report:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Server error creating guest report',
-      error: error.message
-    });
-  }
-}
 
 // Get reports by verification token only (no email needed)
 async getGuestReportsByToken(req, res) {
