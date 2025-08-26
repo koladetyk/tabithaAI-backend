@@ -116,7 +116,7 @@ exports.getDashboardStats = async (req, res) => {
     const [userResult, reportResult, pendingResult, completedResult] = await Promise.all([
       db.query('SELECT COUNT(*) FROM users'),
       db.query('SELECT COUNT(*) FROM reports'),
-      db.query("SELECT COUNT(*) FROM reports WHERE status IN ('under_review', 'in_progress')"),
+      db.query("SELECT COUNT(*) FROM reports WHERE status IN ('under_review', 'processing')"),
       db.query("SELECT COUNT(*) FROM reports WHERE status = 'completed'")
     ]);
 
