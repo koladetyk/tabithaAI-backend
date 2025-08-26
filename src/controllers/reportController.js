@@ -793,10 +793,20 @@ async createGuestReport(req, res) {
   }
 }
 
-// Update your getAllReports method to include evidence summaries
+// Enhanced getAllReports method with advanced filtering
 async getAllReports(req, res) {
   try {
-    const { page = 1, limit = 10, status, incident_type } = req.query;
+    const { 
+      page = 1, 
+      limit = 10, 
+      status, 
+      incident_type,
+      date_range, // New: 7days, 30days, 90days, thisyear
+      start_date, // New: Custom date range start
+      end_date,   // New: Custom date range end
+      search      // New: Search by title or description
+    } = req.query;
+    
     const offset = (page - 1) * limit;
     
     // Build query based on user role and filters
@@ -811,34 +821,101 @@ async getAllReports(req, res) {
       queryParams.push(req.user.id);
     }
     
-    // Add filters
+    // Add status filter
     if (status) {
       conditions.push('status = $' + (queryParams.length + 1));
       queryParams.push(status);
     }
     
+    // Add incident type filter
     if (incident_type) {
       conditions.push('incident_type = $' + (queryParams.length + 1));
       queryParams.push(incident_type);
     }
     
-    // Add WHERE clause if conditions exist
-    if (conditions.length > 0) {
-      query += ' WHERE ' + conditions.join(' AND ');
-      countQuery += ' WHERE ' + conditions.join(' AND ');
+    // Add date range filtering
+    if (date_range) {
+      let dateCondition = '';
+      const now = new Date();
+      
+      switch (date_range) {
+        case '7days':
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          dateCondition = 'created_at >= $' + (queryParams.length + 1);
+          queryParams.push(sevenDaysAgo.toISOString());
+          break;
+          
+        case '30days':
+          const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          dateCondition = 'created_at >= $' + (queryParams.length + 1);
+          queryParams.push(thirtyDaysAgo.toISOString());
+          break;
+          
+        case '90days':
+          const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          dateCondition = 'created_at >= $' + (queryParams.length + 1);
+          queryParams.push(ninetyDaysAgo.toISOString());
+          break;
+          
+        case 'thisyear':
+          const yearStart = new Date(now.getFullYear(), 0, 1);
+          dateCondition = 'created_at >= $' + (queryParams.length + 1);
+          queryParams.push(yearStart.toISOString());
+          break;
+          
+        default:
+          // Invalid date_range value, ignore
+          break;
+      }
+      
+      if (dateCondition) {
+        conditions.push(dateCondition);
+      }
     }
     
-    // Add pagination - FIXED: changed submitted_date to created_at
+    // Add custom date range filtering (overrides date_range if both provided)
+    if (start_date || end_date) {
+      if (start_date) {
+        conditions.push('created_at >= $' + (queryParams.length + 1));
+        queryParams.push(new Date(start_date).toISOString());
+      }
+      if (end_date) {
+        // Add one day to end_date to include the entire end date
+        const endDateTime = new Date(end_date);
+        endDateTime.setDate(endDateTime.getDate() + 1);
+        conditions.push('created_at < $' + (queryParams.length + 1));
+        queryParams.push(endDateTime.toISOString());
+      }
+    }
+    
+    // Add search functionality (search in title and incident_description)
+    if (search) {
+      const searchTerm = `%${search.trim()}%`;
+      conditions.push(
+        '(title ILIKE $' + (queryParams.length + 1) + 
+        ' OR incident_description ILIKE $' + (queryParams.length + 2) + ')'
+      );
+      queryParams.push(searchTerm, searchTerm);
+    }
+    
+    // Add WHERE clause if conditions exist
+    if (conditions.length > 0) {
+      const whereClause = ' WHERE ' + conditions.join(' AND ');
+      query += whereClause;
+      countQuery += whereClause;
+    }
+    
+    // Add pagination
     query += ' ORDER BY created_at DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
-    queryParams.push(limit, offset);
+    const paginationParams = [...queryParams, limit, offset];
     
     // Execute queries
     const [reports, totalCount] = await Promise.all([
-      db.query(query, queryParams),
-      db.query(countQuery, queryParams.slice(0, -2)) // Remove limit and offset for count
+      db.query(query, paginationParams),
+      db.query(countQuery, queryParams)
     ]);
     
-    // Get evidence summaries for all reports - FIXED: Direct implementation
+    // Get evidence summaries for all reports
     const reportIds = reports.rows.map(report => report.id);
     let reportsWithEvidence = reports.rows;
     
@@ -900,6 +977,14 @@ async getAllReports(req, res) {
         limit: parseInt(limit),
         total: parseInt(totalCount.rows[0].count),
         pages: Math.ceil(totalCount.rows[0].count / limit)
+      },
+      filters: {
+        status: status || null,
+        incident_type: incident_type || null,
+        date_range: date_range || null,
+        start_date: start_date || null,
+        end_date: end_date || null,
+        search: search || null
       }
     });
   } catch (error) {

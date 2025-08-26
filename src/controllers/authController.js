@@ -377,14 +377,14 @@ if (matchingReports.rows.length > 0) {
   }
 }
 
-// Delete user (admin only)
+// Delete user (admin only) - Updated to use ID instead of email
 async deleteUser(req, res) {
   const client = await db.connect();
   
   try {
     await client.query('BEGIN');
     
-    const targetEmail = req.params.email || req.body.email;
+    const targetUserId = req.params.id; // Changed from email to id
     
     // Only admins can delete users
     if (!req.user.is_admin) {
@@ -395,16 +395,16 @@ async deleteUser(req, res) {
       });
     }
     
-    if (!targetEmail) {
+    if (!targetUserId) {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        message: 'Email is required'
+        message: 'User ID is required'
       });
     }
     
     // Prevent admin from deleting themselves
-    if (req.user.email === targetEmail) {
+    if (req.user.id === targetUserId) {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
@@ -414,8 +414,8 @@ async deleteUser(req, res) {
     
     // Check if user exists
     const userResult = await client.query(
-      'SELECT id, email, is_admin, is_master_admin FROM users WHERE email = $1',
-      [targetEmail]
+      'SELECT id, email, is_admin, is_master_admin FROM users WHERE id = $1',
+      [targetUserId]
     );
     
     if (userResult.rows.length === 0) {
@@ -464,7 +464,7 @@ async deleteUser(req, res) {
     await client.query(
       `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
-      ['DELETE', 'USER', targetUser.id, req.user.id, `Deleted user ${targetEmail}`]
+      ['DELETE', 'USER', targetUser.id, req.user.id, `Deleted user ${targetUser.email} (ID: ${targetUser.id})`]
     );
     
     await client.query('COMMIT');
@@ -474,7 +474,7 @@ async deleteUser(req, res) {
       message: 'User deleted successfully',
       deletedUser: {
         id: targetUser.id,
-        email: targetEmail
+        email: targetUser.email
       }
     });
     
