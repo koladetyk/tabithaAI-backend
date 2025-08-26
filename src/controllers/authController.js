@@ -376,6 +376,120 @@ if (matchingReports.rows.length > 0) {
     client.release();
   }
 }
+
+// Delete user (admin only)
+async deleteUser(req, res) {
+  const client = await db.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const targetEmail = req.params.email || req.body.email;
+    
+    // Only admins can delete users
+    if (!req.user.is_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        success: false,
+        message: 'Admin privileges required to delete users'
+      });
+    }
+    
+    if (!targetEmail) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+    
+    // Prevent admin from deleting themselves
+    if (req.user.email === targetEmail) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot delete your own account'
+      });
+    }
+    
+    // Check if user exists
+    const userResult = await client.query(
+      'SELECT id, email, is_admin, is_master_admin FROM users WHERE email = $1',
+      [targetEmail]
+    );
+    
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    const targetUser = userResult.rows[0];
+    
+    // Only master admin can delete other admins
+    if (targetUser.is_admin && !req.user.is_master_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        success: false,
+        message: 'Only master admin can delete other admins'
+      });
+    }
+    
+    // Prevent deletion of master admin
+    if (targetUser.is_master_admin) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        success: false,
+        message: 'Master admin account cannot be deleted'
+      });
+    }
+    
+    // Delete related data first (due to foreign key constraints)
+    await client.query('DELETE FROM notifications WHERE user_id = $1', [targetUser.id]);
+    await client.query('DELETE FROM ai_interactions WHERE user_id = $1', [targetUser.id]);
+    await client.query('DELETE FROM agency_contacts WHERE user_id = $1', [targetUser.id]);
+    
+    // Update reports to remove user association (make them anonymous)
+    await client.query(
+      'UPDATE reports SET user_id = NULL, anonymous = true WHERE user_id = $1',
+      [targetUser.id]
+    );
+    
+    // Delete the user
+    await client.query('DELETE FROM users WHERE id = $1', [targetUser.id]);
+    
+    // Create audit log
+    await client.query(
+      `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['DELETE', 'USER', targetUser.id, req.user.id, `Deleted user ${targetEmail}`]
+    );
+    
+    await client.query('COMMIT');
+    
+    return res.status(200).json({
+      success: true,
+      message: 'User deleted successfully',
+      deletedUser: {
+        id: targetUser.id,
+        email: targetEmail
+      }
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting user:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error deleting user',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+}
   
   // Login user with email OR phone number - WITH AGENCY INFO
   async login(req, res) {
