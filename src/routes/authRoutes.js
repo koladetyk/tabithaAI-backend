@@ -2,13 +2,13 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { isAuthenticated } = require('../middleware/auth');
+const { isAuthenticated,isAdmin } = require('../middleware/auth');
 
 // Register with email or phone
 router.post('/register', authController.register);
 
 // Route: Delete user — only admin can delete regular users, only master admin can delete admins
-router.delete('/delete/:email', isAuthenticated, isAdmin, adminController.deleteUser);
+router.delete('/delete/:email', isAuthenticated, isAdmin, authController.deleteUser);
 
 // Login with email or phone
 router.post('/login', authController.login);
