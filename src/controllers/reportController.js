@@ -7,6 +7,7 @@ const evidenceController = require('./evidenceController');
 
 class ReportController {
   
+
 // Fixed getReportById method with proper URL generation and error handling
 async getReportById(req, res) {
   try {
@@ -73,17 +74,25 @@ async getReportById(req, res) {
       })
     );
     
+    // Organize evidence by type
+    const organizedEvidence = {
+      audios: processedEvidence.filter(e => e.evidence_type === 'audio'),
+      images: processedEvidence.filter(e => e.evidence_type === 'image'),
+      videos: processedEvidence.filter(e => e.evidence_type === 'video'),
+      documents: processedEvidence.filter(e => e.evidence_type === 'document')
+    };
+
     return res.status(200).json({
       success: true,
       data: {
         ...report.rows[0],
-        evidence: processedEvidence,
+        evidence: organizedEvidence,
         evidenceSummary: {
           total: processedEvidence.length,
-          images: processedEvidence.filter(e => e.evidence_type === 'image').length,
-          audios: processedEvidence.filter(e => e.evidence_type === 'audio').length,
-          videos: processedEvidence.filter(e => e.evidence_type === 'video').length,
-          documents: processedEvidence.filter(e => e.evidence_type === 'document').length
+          images: organizedEvidence.images.length,
+          audios: organizedEvidence.audios.length,
+          videos: organizedEvidence.videos.length,
+          documents: organizedEvidence.documents.length
         }
       }
     });
