@@ -7,6 +7,9 @@ const { isAdmin, isMasterAdmin } = require('../middleware/roleChecks');
 // Route: Get audit logs — accessible to any admin
 router.get('/audit-logs', isAuthenticated, isAdmin, adminController.getAuditLogs);
 
+// In your admin routes file (adminRoutes.js), add:
+router.get('/users', isAuthenticated, isAdmin, adminController.getAllAdmins);
+
 // Route: Promote user to admin — any admin can do this
 router.post('/promote/:email', isAuthenticated, isAdmin, adminController.promoteToAdmin);
 

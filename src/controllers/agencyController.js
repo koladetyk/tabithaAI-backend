@@ -953,27 +953,150 @@ exports.getCollectiveAgencySummary = async (req, res) => {
 };
 
 
-// GET /agencies/:id/referred-reports
+
+// Updated getReferredReportsForAgency with agency user filtering and pagination
 exports.getReferredReportsForAgency = async (req, res) => {
   const agencyId = req.params.id;
+  const { page = 1, limit = 10, status, date_range, start_date, end_date, search } = req.query;
+  const offset = (page - 1) * limit;
 
   try {
-    const result = await db.query(
-      `SELECT 
-        r.*,
-        rep.title,  -- Changed from "rep.title as report_title"
-        rep.incident_type,
-        rep.incident_description
-       FROM referrals r
-       JOIN reports rep ON r.report_id = rep.id
-       WHERE r.agency_id = $1
-       ORDER BY r.referral_date DESC`,
-      [agencyId]
-    );
+    // If user is agency user (not admin), verify they belong to this agency
+    if (req.user.is_agency_user && !req.user.is_admin) {
+      const userAgency = await db.query(
+        'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+        [req.user.id]
+      );
+
+      if (userAgency.rows.length === 0 || userAgency.rows[0].agency_id != agencyId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only view reports for your assigned agency'
+        });
+      }
+    }
+
+    // Build query with filters
+    let query = `SELECT 
+      r.*,
+      rep.title,
+      rep.incident_type,
+      rep.incident_description,
+      rep.created_at as report_created_at
+     FROM referrals r
+     JOIN reports rep ON r.report_id = rep.id
+     WHERE r.agency_id = $1`;
+     
+    let countQuery = `SELECT COUNT(*) 
+     FROM referrals r
+     JOIN reports rep ON r.report_id = rep.id
+     WHERE r.agency_id = $1`;
+     
+    let queryParams = [agencyId];
+    let conditions = [];
+
+    // Add status filter
+    if (status) {
+      conditions.push('r.referral_status = $' + (queryParams.length + 1));
+      queryParams.push(status);
+    }
+
+    // Add date range filtering
+    if (date_range) {
+      let dateCondition = '';
+      const now = new Date();
+      
+      switch (date_range) {
+        case '7days':
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          dateCondition = 'r.referral_date >= $' + (queryParams.length + 1);
+          queryParams.push(sevenDaysAgo.toISOString());
+          break;
+          
+        case '30days':
+          const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          dateCondition = 'r.referral_date >= $' + (queryParams.length + 1);
+          queryParams.push(thirtyDaysAgo.toISOString());
+          break;
+          
+        case '90days':
+          const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          dateCondition = 'r.referral_date >= $' + (queryParams.length + 1);
+          queryParams.push(ninetyDaysAgo.toISOString());
+          break;
+          
+        case 'thisyear':
+          const yearStart = new Date(now.getFullYear(), 0, 1);
+          dateCondition = 'r.referral_date >= $' + (queryParams.length + 1);
+          queryParams.push(yearStart.toISOString());
+          break;
+      }
+      
+      if (dateCondition) {
+        conditions.push(dateCondition);
+      }
+    }
+
+    // Add custom date range filtering
+    if (start_date || end_date) {
+      if (start_date) {
+        conditions.push('r.referral_date >= $' + (queryParams.length + 1));
+        queryParams.push(new Date(start_date).toISOString());
+      }
+      if (end_date) {
+        const endDateTime = new Date(end_date);
+        endDateTime.setDate(endDateTime.getDate() + 1);
+        conditions.push('r.referral_date < $' + (queryParams.length + 1));
+        queryParams.push(endDateTime.toISOString());
+      }
+    }
+
+    // Add search functionality
+    if (search) {
+      const searchTerm = `%${search.trim()}%`;
+      conditions.push(
+        '(rep.title ILIKE $' + (queryParams.length + 1) + 
+        ' OR rep.incident_description ILIKE $' + (queryParams.length + 2) + 
+        ' OR r.notes ILIKE $' + (queryParams.length + 3) + ')'
+      );
+      queryParams.push(searchTerm, searchTerm, searchTerm);
+    }
+
+    // Add conditions to queries
+    if (conditions.length > 0) {
+      const whereClause = ' AND ' + conditions.join(' AND ');
+      query += whereClause;
+      countQuery += whereClause;
+    }
+
+    // Add pagination
+    query += ' ORDER BY r.referral_date DESC LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
+    const paginationParams = [...queryParams, limit, offset];
+
+    // Execute queries
+    const [result, totalCount] = await Promise.all([
+      db.query(query, paginationParams),
+      db.query(countQuery, queryParams)
+    ]);
 
     return res.status(200).json({
       success: true,
-      reports: result.rows,
+      data: result.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: parseInt(totalCount.rows[0].count),
+        pages: Math.ceil(totalCount.rows[0].count / limit)
+      },
+      filters: {
+        status: status || null,
+        date_range: date_range || null,
+        start_date: start_date || null,
+        end_date: end_date || null,
+        search: search || null
+      },
+      userType: req.user.is_admin ? 'admin' : 'agency_user',
+      agencyId: agencyId
     });
 
   } catch (err) {
