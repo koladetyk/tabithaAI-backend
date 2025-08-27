@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const agencyController = require('../controllers/agencyController');
 const { isAuthenticated, isAdmin } = require('../middleware/auth');
+const { isAgencyUser } = require('../middleware/roleChecks');
 
 // SPECIFIC ROUTES FIRST (before any /:id routes)
 
@@ -9,7 +10,7 @@ const { isAuthenticated, isAdmin } = require('../middleware/auth');
 router.get('/collective-summary', isAuthenticated, isAdmin, agencyController.getCollectiveAgencySummary);
 
 // Get all agencies with contacts
-router.get('/', isAuthenticated, isAdmin, agencyController.getAgencies);
+router.get('/', isAuthenticated, isAdmin,  agencyController.getAgencies);
 
 // PARAMETERIZED ROUTES AFTER SPECIFIC ROUTES
 
@@ -20,7 +21,7 @@ router.get('/:id', isAuthenticated, isAdmin, agencyController.getAgencyById);
 router.get('/:id/report-summary', isAuthenticated, isAdmin, agencyController.getSingleAgencyReportSummary);
 
 // Get reports referred to a specific agency
-router.get('/:id/referred-reports', isAuthenticated, isAdmin, agencyController.getReferredReportsForAgency);
+router.get('/:id/referred-reports', isAuthenticated, isAdmin, isAgencyUser, agencyController.getReferredReportsForAgency);
 
 // POST ROUTES
 
