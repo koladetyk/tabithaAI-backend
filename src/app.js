@@ -43,19 +43,18 @@ app.use(passport.initialize());
 
 // IMPORTANT: CORS configuration must come BEFORE route definitions
 app.use(cors({
-  // Allow multiple origins
   origin: function(origin, callback) {
     const allowedOrigins = [
       process.env.FRONTEND_URL, 
       'http://localhost:3000', 
-      'https://928a71dbf7cb.ngrok-free.app', // Add this line
+      'https://928a71dbf7cb.ngrok-free.app',
+      'https://tabithaaiadmintestarea.netlify.app', // Add this line
       'http://localhost:8080',
       'http://127.0.0.1:3000',
-      'http://localhost:5173', // Add Vite's default port
-      'http://127.0.0.1:5173'   // Add Vite's default port
-    ].filter(Boolean); // Remove undefined values
+      'http://localhost:5173',
+      'http://127.0.0.1:5173'
+    ].filter(Boolean);
     
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {

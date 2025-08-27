@@ -8,7 +8,7 @@ const evidenceController = require('./evidenceController');
 class ReportController {
   
 
-// Fixed getReportById method with proper URL generation and error handling
+// Fixed getReportById method with agency user access
 async getReportById(req, res) {
   try {
     const reportId = req.params.id;
@@ -26,8 +26,38 @@ async getReportById(req, res) {
       });
     }
     
-    // Check permissions
-    if (!req.user.is_admin && req.user.id !== report.rows[0].user_id) {
+    // ENHANCED: Check permissions - now includes agency users
+    let hasPermission = false;
+    
+    // Admin can view all reports
+    if (req.user.is_admin) {
+      hasPermission = true;
+    }
+    // Report owner can view their own report
+    else if (req.user.id === report.rows[0].user_id) {
+      hasPermission = true;
+    }
+    // Agency users can view reports referred to their agency
+    else if (req.user.is_agency_user) {
+      // Check if this report is referred to the user's agency
+      const userAgency = await db.query(
+        'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+        [req.user.id]
+      );
+      
+      if (userAgency.rows.length > 0) {
+        const referralCheck = await db.query(
+          'SELECT id FROM referrals WHERE report_id = $1 AND agency_id = $2',
+          [reportId, userAgency.rows[0].agency_id]
+        );
+        
+        if (referralCheck.rows.length > 0) {
+          hasPermission = true;
+        }
+      }
+    }
+    
+    if (!hasPermission) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to view this report'
