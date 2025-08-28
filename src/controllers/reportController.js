@@ -1293,7 +1293,7 @@ async getReportsByContact(req, res) {
   }
 
 
-// Get reports by verification token only (no email needed)
+// Get reports by verification token only (no email needed) - with organized evidence
 async getGuestReportsByToken(req, res) {
   try {
     const verificationCode = req.params.token;
@@ -1330,13 +1330,64 @@ async getGuestReportsByToken(req, res) {
       });
     }
     
-    // Include evidence with each report
+    // Process each report to organize evidence by type
     for (let i = 0; i < reports.rows.length; i++) {
-      const evidence = await db.query(
-        'SELECT * FROM evidence WHERE report_id = $1',
+      const evidenceResult = await db.query(
+        'SELECT * FROM evidence WHERE report_id = $1 ORDER BY submitted_date DESC',
         [reports.rows[i].id]
       );
-      reports.rows[i].evidence = evidence.rows;
+      
+      // Process each evidence item to generate URLs if files exist
+      const processedEvidence = await Promise.all(
+        evidenceResult.rows.map(async (evidence) => {
+          if (evidence.file_url) {
+            try {
+              // Try to generate signed URL
+              const signedUrl = await storageService.getSignedUrl(evidence.file_url);
+              return {
+                ...evidence,
+                viewUrl: signedUrl,
+                downloadUrl: signedUrl,
+                error: null
+              };
+            } catch (storageError) {
+              // File doesn't exist - return evidence data with error
+              return {
+                ...evidence,
+                viewUrl: null,
+                downloadUrl: null,
+                error: "File not found"
+              };
+            }
+          } else {
+            // No file URL - likely a URI-only evidence
+            return {
+              ...evidence,
+              viewUrl: evidence.metadata?.uri || null,
+              downloadUrl: null,
+              error: evidence.metadata?.uri ? null : "File not found"
+            };
+          }
+        })
+      );
+      
+      // Organize evidence by type
+      const organizedEvidence = {
+        audios: processedEvidence.filter(e => e.evidence_type === 'audio'),
+        images: processedEvidence.filter(e => e.evidence_type === 'image'),
+        videos: processedEvidence.filter(e => e.evidence_type === 'video'),
+        documents: processedEvidence.filter(e => e.evidence_type === 'document')
+      };
+      
+      // Add organized evidence and summary to report
+      reports.rows[i].evidence = organizedEvidence;
+      reports.rows[i].evidenceSummary = {
+        total: processedEvidence.length,
+        images: organizedEvidence.images.length,
+        audios: organizedEvidence.audios.length,
+        videos: organizedEvidence.videos.length,
+        documents: organizedEvidence.documents.length
+      };
     }
     
     return res.status(200).json({
