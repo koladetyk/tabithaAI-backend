@@ -50,24 +50,79 @@ router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport)
 // Get individual report by ID - MOVED AFTER specific routes
 router.get('/:id', isAuthenticated, reportController.getReportById);
 
+// CHANGE THIS SECTION:
+
 // ENHANCED: Create new report with array structure support
-// Supports: audio_files[], images_videos[], note, email, phoneNumber, address
-// File uploads are additional to the arrays (URIs can be provided in arrays)
-// UPDATED: Using new middleware with better error handling and file size limits
-router.post('/', 
-  isAuthenticated, 
-  ...fileUpload.multiple('files', 10), // Allow up to 10 files with smart size limits
+router.post('/',
+  isAuthenticated,
+  fileUpload.smartUpload.any(), // Use smartUpload.any()
+  (req, res, next) => {
+    // Normalize files to array format
+    if (req.files && !Array.isArray(req.files)) {
+      const filesArray = [];
+      Object.keys(req.files).forEach(fieldName => {
+        if (Array.isArray(req.files[fieldName])) {
+          filesArray.push(...req.files[fieldName]);
+        } else {
+          filesArray.push(req.files[fieldName]);
+        }
+      });
+      req.files = filesArray;
+    }
+    next();
+  },
+  fileUpload.handleUploadError,
   reportController.createReport
 );
 
-// LEGACY: Create new audio-specific report (backwards compatibility)
-// This now redirects to the main createReport with transformed data
-// UPDATED: Using audio-specific middleware for better audio file handling
-router.post('/audio', 
-  isAuthenticated, 
-  fileUpload.audioUpload.array('files', 5), // Up to 5 audio files
+// LEGACY: Create new audio-specific report
+router.post('/audio',
+  isAuthenticated,
+  fileUpload.smartUpload.any(),
+  (req, res, next) => {
+    // Same normalization
+    if (req.files && !Array.isArray(req.files)) {
+      const filesArray = [];
+      Object.keys(req.files).forEach(fieldName => {
+        if (Array.isArray(req.files[fieldName])) {
+          filesArray.push(...req.files[fieldName]);
+        } else {
+          filesArray.push(req.files[fieldName]);
+        }
+      });
+      req.files = filesArray;
+    }
+    next();
+  },
   fileUpload.handleUploadError,
   reportController.createAudioReport
+);
+
+// ENHANCED: Guest report creation
+router.post('/guest',
+  fileUpload.smartUpload.any(), // Use smartUpload.any()
+  (req, res, next) => {
+    console.log('Middleware - Raw req.files:', req.files);
+    
+    // Normalize files to array format
+    if (req.files && !Array.isArray(req.files)) {
+      const filesArray = [];
+      Object.keys(req.files).forEach(fieldName => {
+        console.log(`Processing field: ${fieldName}`);
+        if (Array.isArray(req.files[fieldName])) {
+          filesArray.push(...req.files[fieldName]);
+        } else {
+          filesArray.push(req.files[fieldName]);
+        }
+      });
+      req.files = filesArray;
+    }
+    
+    console.log('Middleware - Normalized req.files:', req.files);
+    next();
+  },
+  fileUpload.handleUploadError,
+  reportController.createGuestReport
 );
 
 // Update report
@@ -82,12 +137,5 @@ router.patch('/:id/archive', isAuthenticated, reportController.archiveReport);
 // Delete report (admin only)
 router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
 
-// ENHANCED: Guest report creation with array structure support
-// No authentication required - perfect for anonymous reporting
-// UPDATED: Using new middleware with proper file size limits
-router.post('/guest', 
-  ...fileUpload.multiple('files', 10), // Allow up to 10 files for guest reports
-  reportController.createGuestReport
-);
 
 module.exports = router;
