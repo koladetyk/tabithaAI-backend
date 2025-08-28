@@ -493,10 +493,13 @@ async createReport(req, res) {
   }
 }
 
-// Fixed createGuestReport method with proper metadata (no contact info in evidence metadata)
+// Fixed createGuestReport method with enhanced file processing and debugging
 async createGuestReport(req, res) {
   try {
     console.log('DEBUG - Full request body:', req.body);
+    console.log('DEBUG - req.files structure:', req.files);
+    console.log('DEBUG - req.files type:', typeof req.files);
+    console.log('DEBUG - req.files keys:', req.files ? Object.keys(req.files) : 'no files');
     
     const {
       audio_files,        
@@ -611,7 +614,7 @@ async createGuestReport(req, res) {
       ]
     );
     
-    // Record AI interaction if applicable (same as before)
+    // Record AI interaction if applicable
     if (aiResult) {
       try {
         await recordInteraction(
@@ -657,7 +660,7 @@ async createGuestReport(req, res) {
       console.error('Error creating email verification:', verificationError);
     }
     
-    // Handle audio files - FIXED metadata
+    // Handle audio files metadata - FIXED metadata
     const evidenceItems = [];
     for (const audioFile of parsedAudioFiles) {
       const evidenceId = uuidv4();
@@ -692,7 +695,7 @@ async createGuestReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // Handle images/videos - FIXED metadata
+    // Handle images/videos metadata - FIXED metadata
     for (const mediaFile of parsedImagesVideos) {
       const evidenceId = uuidv4();
       
@@ -733,11 +736,39 @@ async createGuestReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // Handle uploaded files - FIXED metadata
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
+    // ENHANCED: Handle uploaded files with better detection - FIXED metadata
+    let filesToProcess = [];
+    
+    if (req.files) {
+      if (Array.isArray(req.files)) {
+        // Files normalized by middleware to array
+        filesToProcess = req.files;
+        console.log('DEBUG - Files from normalized array:', filesToProcess.length);
+      } else if (typeof req.files === 'object') {
+        // Files in object format (multiple fields)
+        Object.keys(req.files).forEach(fieldName => {
+          console.log(`DEBUG - Processing field: ${fieldName}`);
+          if (Array.isArray(req.files[fieldName])) {
+            filesToProcess = filesToProcess.concat(req.files[fieldName]);
+            console.log(`DEBUG - Added ${req.files[fieldName].length} files from ${fieldName}`);
+          } else if (req.files[fieldName]) {
+            // Single file in this field
+            filesToProcess.push(req.files[fieldName]);
+            console.log(`DEBUG - Added 1 file from ${fieldName}`);
+          }
+        });
+      }
+    }
+    
+    console.log(`DEBUG - Total files to process: ${filesToProcess.length}`);
+    
+    if (filesToProcess.length > 0) {
+      for (const file of filesToProcess) {
+        console.log(`DEBUG - Processing file: ${file.originalname} (${file.mimetype})`);
+        
         const evidenceId = uuidv4();
         
+        // Determine evidence type based on file mime type
         let evidenceType = 'document';
         if (file.mimetype.startsWith('image/')) {
           evidenceType = 'image';
@@ -747,44 +778,59 @@ async createGuestReport(req, res) {
           evidenceType = 'video';
         }
         
-        const fileUrl = await storageService.uploadFile(
-          file,
-          null,  
-          reportId,
-          evidenceType
-        );
-        
-        const newEvidence = await db.query(
-          `INSERT INTO evidence (
-            id,
-            report_id,
-            evidence_type,
-            file_path,
-            file_url,
-            description,
-            submitted_date,
-            metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
-          [
-            evidenceId,
+        try {
+          // Upload file to cloud storage
+          const fileUrl = await storageService.uploadFile(
+            file,
+            null,  // No user ID for guest reports
             reportId,
-            evidenceType,
-            file.originalname,
-            fileUrl,
-            `Uploaded ${evidenceType}: ${file.originalname}`,
-            {
-              original_name: file.originalname,
-              file_size: file.size,
-              mime_type: file.mimetype,
-              upload_timestamp: new Date().toISOString(),
-              source_type: 'file_upload'
-            }
-          ]
-        );
-        
-        evidenceItems.push(newEvidence.rows[0]);
+            evidenceType
+          );
+          
+          console.log(`DEBUG - File uploaded successfully: ${fileUrl}`);
+          
+          // Create evidence record
+          const newEvidence = await db.query(
+            `INSERT INTO evidence (
+              id,
+              report_id,
+              evidence_type,
+              file_path,
+              file_url,
+              description,
+              submitted_date,
+              metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
+            [
+              evidenceId,
+              reportId,
+              evidenceType,
+              file.originalname,
+              fileUrl,
+              `Uploaded ${evidenceType}: ${file.originalname}`,
+              {
+                original_name: file.originalname,
+                file_size: file.size,
+                mime_type: file.mimetype,
+                upload_timestamp: new Date().toISOString(),
+                source_type: 'file_upload'
+              }
+            ]
+          );
+          
+          evidenceItems.push(newEvidence.rows[0]);
+          console.log(`DEBUG - Evidence record created: ${evidenceId}`);
+          
+        } catch (fileError) {
+          console.error(`ERROR - Failed to process file ${file.originalname}:`, fileError);
+          // Continue processing other files
+        }
       }
+    } else {
+      console.log('DEBUG - No files to process');
     }
+    
+    console.log(`DEBUG - Total evidence items created: ${evidenceItems.length}`);
     
     const responseData = {
       success: true,
@@ -796,7 +842,7 @@ async createGuestReport(req, res) {
         evidence: evidenceItems,
         audio_files_processed: parsedAudioFiles.length,
         images_videos_processed: parsedImagesVideos.length,
-        uploaded_files_processed: req.files?.length || 0
+        uploaded_files_processed: filesToProcess.length
       },
       aiAnalysis: aiResult ? {
         suggestedServices: aiResult.suggestedServices,
