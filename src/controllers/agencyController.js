@@ -738,18 +738,22 @@ exports.updateContactPerson = async (req, res) => {
   }
 };
 
-// View agencies and contact persons
+// View agencies and contact persons - FIXED to return empty array when no contacts
 exports.getAgencies = async (req, res) => {
   try {
     const agencies = await db.query(`
-      SELECT a.*, json_agg(
-        json_build_object(
-          'user_id', u.id,
-          'full_name', u.full_name,
-          'email', u.email,
-          'phone_number', u.phone_number
+      SELECT a.*, 
+      CASE 
+        WHEN COUNT(u.id) = 0 THEN '[]'::json
+        ELSE json_agg(
+          json_build_object(
+            'user_id', u.id,
+            'full_name', u.full_name,
+            'email', u.email,
+            'phone_number', u.phone_number
+          )
         )
-      ) AS contacts
+      END AS contacts
       FROM agencies a
       LEFT JOIN agency_contacts ac ON ac.agency_id = a.id
       LEFT JOIN users u ON ac.user_id = u.id
@@ -770,14 +774,18 @@ exports.getAgencyById = async (req, res) => {
 
   try {
     const agency = await db.query(`
-      SELECT a.*, json_agg(
-        json_build_object(
-          'user_id', u.id,
-          'full_name', u.full_name,
-          'email', u.email,
-          'phone_number', u.phone_number
+      SELECT a.*, 
+      CASE 
+        WHEN COUNT(u.id) = 0 THEN '[]'::json
+        ELSE json_agg(
+          json_build_object(
+            'user_id', u.id,
+            'full_name', u.full_name,
+            'email', u.email,
+            'phone_number', u.phone_number
+          )
         )
-      ) AS contacts
+      END AS contacts
       FROM agencies a
       LEFT JOIN agency_contacts ac ON ac.agency_id = a.id
       LEFT JOIN users u ON ac.user_id = u.id
