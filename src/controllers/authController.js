@@ -701,169 +701,170 @@ async deleteUser(req, res) {
     }
   }
 
-  // Enhanced Google OAuth callback handler - WITH AGENCY INFO
-  async handleGoogleCallback(req, res) {
-    try {
-      console.log('Google OAuth callback received:', req.body);
-      
-      const { token } = req.body;
-      
-      if (!token) {
-        return res.status(400).json({
-          success: false,
-          message: 'Google token is required'
-        });
-      }
-      
-      // Verify the Google token
-      let ticket;
-      let payload;
-      
-      try {
-        ticket = await googleClient.verifyIdToken({
-          idToken: token,
-          audience: process.env.GOOGLE_CLIENT_ID
-        });
-        payload = ticket.getPayload();
-      } catch (verifyError) {
-        console.error('Google token verification failed:', verifyError);
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid Google token'
-        });
-      }
-      
-      const { sub: googleId, email, name, picture, email_verified } = payload;
-      
-      // Ensure email is verified
-      if (!email_verified) {
-        return res.status(400).json({
-          success: false,
-          message: 'Google email is not verified'
-        });
-      }
-      
-      console.log('Google user info:', { googleId, email, name, picture });
-      
-      // Check if user exists by Google ID first
-      let user = await db.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
-      
-      if (user.rows.length === 0) {
-        // Check if user exists by email
-        user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-        
-        if (user.rows.length === 0) {
-          // Create new user
-          const userId = uuidv4();
-          // In handleGoogleCallback, when creating new user:
-          const username = email.split('@')[0] + '_' + Math.floor(Math.random() * 1000); // Generate username from email
-
-          const newUser = await db.query(
-            `INSERT INTO users (
-              id, 
-              email, 
-              full_name, 
-              username,  // Add this field
-              google_id, 
-              profile_picture, 
-              created_at, 
-              updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
-            [userId, email, name, username, googleId, picture] // Add username parameter
-          );
-          user = newUser;
-          console.log('Created new Google user:', userId);
-        } else {
-          // Update existing user with Google info
-          user = await db.query(
-            `UPDATE users SET 
-              google_id = $1, 
-              profile_picture = COALESCE(profile_picture, $2),
-              full_name = COALESCE(full_name, $3),
-              updated_at = CURRENT_TIMESTAMP 
-            WHERE email = $4 RETURNING *`,
-            [googleId, picture, name, email]
-          );
-          console.log('Updated existing user with Google info:', user.rows[0].id);
-        }
-      } else {
-        // Update last login for existing Google user
-        await db.query(
-          'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-          [user.rows[0].id]
-        );
-        console.log('Google user login:', user.rows[0].id);
-      }
-      
-      // Get agency information for the user
-      const agencyInfo = await db.query(
-        `SELECT 
-          ac.agency_id,
-          a.name as agency_name,
-          a.agency_notes,
-          a.status as agency_status,
-          a.address as agency_address,
-          ac.created_at as agency_contact_created
-        FROM agency_contacts ac
-        JOIN agencies a ON ac.agency_id = a.id
-        WHERE ac.user_id = $1`,
-        [user.rows[0].id]
-      );
-      
-      // Generate JWT token
-      const jwtToken = jwt.sign(
-        { id: user.rows[0].id },
-        process.env.JWT_SECRET,
-        { expiresIn: '1d' }
-      );
-      
-      // Set the token as a cookie
-      res.cookie('auth_token', jwtToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
-        path: '/'
-      });
-      
-      console.log('Google OAuth successful - cookie set');
-      
-      // Prepare user response with agency information
-      const userResponse = {
-        id: user.rows[0].id,
-        email: user.rows[0].email,
-        full_name: user.rows[0].full_name,
-        profile_picture: user.rows[0].profile_picture,
-        username: user.rows[0].username,
-        phone_number: user.rows[0].phone_number,
-        is_admin: user.rows[0].is_admin,
-        is_master_admin: user.rows[0].is_master_admin,
-        // Add agency information
-        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
-        agency_info: agencyInfo.rows.length > 0 ? {
-          id: agencyInfo.rows[0].agency_id,
-          name: agencyInfo.rows[0].agency_name,
-          notes: agencyInfo.rows[0].agency_notes,
-          status: agencyInfo.rows[0].agency_status,
-          address: agencyInfo.rows[0].agency_address,
-          contact_created_at: agencyInfo.rows[0].agency_contact_created
-        } : null
-      };
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Google authentication successful',
-        user: userResponse
-      });
-    } catch (error) {
-      console.error('Error handling Google callback:', error);
-      return res.status(500).json({
+  // FIXED: handleGoogleCallback function with corrected SQL query
+// Enhanced Google OAuth callback handler - WITH AGENCY INFO
+async handleGoogleCallback(req, res) {
+  try {
+    console.log('Google OAuth callback received:', req.body);
+    
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({
         success: false,
-        message: 'Server error handling Google authentication',
-        error: error.message
+        message: 'Google token is required'
       });
     }
+    
+    // Verify the Google token
+    let ticket;
+    let payload;
+    
+    try {
+      ticket = await googleClient.verifyIdToken({
+        idToken: token,
+        audience: process.env.GOOGLE_CLIENT_ID
+      });
+      payload = ticket.getPayload();
+    } catch (verifyError) {
+      console.error('Google token verification failed:', verifyError);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Google token'
+      });
+    }
+    
+    const { sub: googleId, email, name, picture, email_verified } = payload;
+    
+    // Ensure email is verified
+    if (!email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google email is not verified'
+      });
+    }
+    
+    console.log('Google user info:', { googleId, email, name, picture });
+    
+    // Check if user exists by Google ID first
+    let user = await db.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+    
+    if (user.rows.length === 0) {
+      // Check if user exists by email
+      user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+      
+      if (user.rows.length === 0) {
+        // Create new user - FIXED: moved comment outside SQL
+        const userId = uuidv4();
+        // Generate username from email
+        const username = email.split('@')[0] + '_' + Math.floor(Math.random() * 1000);
+
+        const newUser = await db.query(
+          `INSERT INTO users (
+            id, 
+            email, 
+            full_name, 
+            username,
+            google_id, 
+            profile_picture, 
+            created_at, 
+            updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+          [userId, email, name, username, googleId, picture]
+        );
+        user = newUser;
+        console.log('Created new Google user:', userId);
+      } else {
+        // Update existing user with Google info
+        user = await db.query(
+          `UPDATE users SET 
+            google_id = $1, 
+            profile_picture = COALESCE(profile_picture, $2),
+            full_name = COALESCE(full_name, $3),
+            updated_at = CURRENT_TIMESTAMP 
+          WHERE email = $4 RETURNING *`,
+          [googleId, picture, name, email]
+        );
+        console.log('Updated existing user with Google info:', user.rows[0].id);
+      }
+    } else {
+      // Update last login for existing Google user
+      await db.query(
+        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+        [user.rows[0].id]
+      );
+      console.log('Google user login:', user.rows[0].id);
+    }
+    
+    // Get agency information for the user
+    const agencyInfo = await db.query(
+      `SELECT 
+        ac.agency_id,
+        a.name as agency_name,
+        a.agency_notes,
+        a.status as agency_status,
+        a.address as agency_address,
+        ac.created_at as agency_contact_created
+      FROM agency_contacts ac
+      JOIN agencies a ON ac.agency_id = a.id
+      WHERE ac.user_id = $1`,
+      [user.rows[0].id]
+    );
+    
+    // Generate JWT token
+    const jwtToken = jwt.sign(
+      { id: user.rows[0].id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+    
+    // Set the token as a cookie
+    res.cookie('auth_token', jwtToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      path: '/'
+    });
+    
+    console.log('Google OAuth successful - cookie set');
+    
+    // Prepare user response with agency information
+    const userResponse = {
+      id: user.rows[0].id,
+      email: user.rows[0].email,
+      full_name: user.rows[0].full_name,
+      profile_picture: user.rows[0].profile_picture,
+      username: user.rows[0].username,
+      phone_number: user.rows[0].phone_number,
+      is_admin: user.rows[0].is_admin,
+      is_master_admin: user.rows[0].is_master_admin,
+      // Add agency information
+      agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+      agency_info: agencyInfo.rows.length > 0 ? {
+        id: agencyInfo.rows[0].agency_id,
+        name: agencyInfo.rows[0].agency_name,
+        notes: agencyInfo.rows[0].agency_notes,
+        status: agencyInfo.rows[0].agency_status,
+        address: agencyInfo.rows[0].agency_address,
+        contact_created_at: agencyInfo.rows[0].agency_contact_created
+      } : null
+    };
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Google authentication successful',
+      user: userResponse
+    });
+  } catch (error) {
+    console.error('Error handling Google callback:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error handling Google authentication',
+      error: error.message
+    });
   }
+}
 
   // Get all reports for current user
   async getUserReports(req, res) {
