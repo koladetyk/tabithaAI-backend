@@ -1941,8 +1941,7 @@ async getLatestReferredReports(req, res) {
     }
   }
   
-// Updated updateReportStatus method in ReportController.js
-
+// Enhanced updateReportStatus method with agency user support
 async updateReportStatus(req, res) {
   try {
     const reportId = req.params.id;
@@ -1951,24 +1950,24 @@ async updateReportStatus(req, res) {
     // Normalize the status (trim whitespace and convert to lowercase)
     status = status?.toString().trim().toLowerCase();
     
-    // Define valid statuses (all lowercase for comparison) - UPDATED to use "processing"
+    // Define valid statuses (all lowercase for comparison)
     const validStatuses = [
       'submitted', 
-      'processing',      // Changed from 'in_progress'
+      'processing',
       'under_review', 
-      'resolving',       // Changed from 'in_progress'
-      'completed',       // Changed from 'resolved'
+      'resolving',
+      'completed',
       'archived',
-      'pending',        // Add common alternative
-      'open'           // Add common alternative
+      'pending',
+      'open'
     ];
     
     // Map common alternatives to your standard statuses
     const statusMappings = {
       'pending': 'submitted',
-      'in_progress': 'processing',  // Map old status to new one
-      'resolved': 'completed',      // Map old status to new one
-      'closed': 'completed',        // Map closed to completed
+      'in_progress': 'processing',
+      'resolved': 'completed',
+      'closed': 'completed',
       'open': 'submitted'
     };
     
@@ -1976,7 +1975,7 @@ async updateReportStatus(req, res) {
     const mappedStatus = statusMappings[status] || status;
     
     if (!validStatuses.includes(status) && !validStatuses.includes(mappedStatus)) {
-      console.log('Invalid status received:', req.body.status); // Debug log
+      console.log('Invalid status received:', req.body.status);
       return res.status(400).json({
         success: false,
         message: `Invalid status "${req.body.status}". Status must be one of: submitted, processing, under_review, resolving, completed, archived`
@@ -1998,8 +1997,38 @@ async updateReportStatus(req, res) {
       });
     }
     
-    // Check permissions
-    if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
+    // ENHANCED: Check permissions - now includes agency users
+    let hasPermission = false;
+    
+    // Admin can update any report status
+    if (req.user.is_admin) {
+      hasPermission = true;
+    }
+    // Report owner can update their own report status
+    else if (req.user.id === existingReport.rows[0].user_id) {
+      hasPermission = true;
+    }
+    // Agency users can update reports referred to their agency
+    else if (req.user.is_agency_user) {
+      // Check if this report is referred to the user's agency
+      const userAgency = await db.query(
+        'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+        [req.user.id]
+      );
+      
+      if (userAgency.rows.length > 0) {
+        const referralCheck = await db.query(
+          'SELECT id FROM referrals WHERE report_id = $1 AND agency_id = $2',
+          [reportId, userAgency.rows[0].agency_id]
+        );
+        
+        if (referralCheck.rows.length > 0) {
+          hasPermission = true;
+        }
+      }
+    }
+    
+    if (!hasPermission) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to update this report status'
@@ -2016,6 +2045,30 @@ async updateReportStatus(req, res) {
       [finalStatus, reportId]
     );
     
+    // OPTIONAL: Also update referral status if this is an agency user
+    if (req.user.is_agency_user) {
+      try {
+        const userAgency = await db.query(
+          'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+          [req.user.id]
+        );
+        
+        if (userAgency.rows.length > 0) {
+          await db.query(
+            `UPDATE referrals SET
+              referral_status = $1,
+              updated_by = $2,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE report_id = $3 AND agency_id = $4`,
+            [finalStatus, req.user.id, reportId, userAgency.rows[0].agency_id]
+          );
+        }
+      } catch (referralUpdateError) {
+        console.error('Error updating referral status:', referralUpdateError);
+        // Continue even if referral update fails
+      }
+    }
+    
     // Send notification if user isn't anonymous and status has changed
     if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
       await notificationService.sendReportStatusNotification(
@@ -2025,14 +2078,20 @@ async updateReportStatus(req, res) {
       );
     }
     
+    // Log the action
+    const userType = req.user.is_admin ? 'Admin' : 
+                     req.user.is_agency_user ? 'Agency User' : 'User';
+    console.log(`[${userType}:${req.user.id}] Updated report ${reportId} status to ${finalStatus}`);
+    
     return res.status(200).json({
       success: true,
       data: updatedReport.rows[0],
-      message: `Report status updated to "${finalStatus}" successfully`
+      message: `Report status updated to "${finalStatus}" successfully`,
+      updatedBy: userType
     });
   } catch (error) {
     console.error('Error updating report status:', error);
-    console.error('Request body:', req.body); // Debug log
+    console.error('Request body:', req.body);
     return res.status(500).json({
       success: false,
       message: 'Server error updating report status',
