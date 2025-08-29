@@ -48,7 +48,8 @@ app.use(cors({
       process.env.FRONTEND_URL, 
       'http://localhost:3000', 
       'https://928a71dbf7cb.ngrok-free.app',
-      'https://tabithaaiadmintestarea.netlify.app', // Add this line
+      'https://tabithaaiadmintestarea.netlify.app',
+      'https://testfrontfortabithaai.netlify.app', 
       'http://localhost:8080',
       'http://127.0.0.1:3000',
       'http://localhost:5173',

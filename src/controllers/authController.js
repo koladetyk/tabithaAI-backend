@@ -755,17 +755,21 @@ async deleteUser(req, res) {
         if (user.rows.length === 0) {
           // Create new user
           const userId = uuidv4();
+          // In handleGoogleCallback, when creating new user:
+          const username = email.split('@')[0] + '_' + Math.floor(Math.random() * 1000); // Generate username from email
+
           const newUser = await db.query(
             `INSERT INTO users (
               id, 
               email, 
               full_name, 
+              username,  // Add this field
               google_id, 
               profile_picture, 
               created_at, 
               updated_at
-            ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
-            [userId, email, name, googleId, picture]
+            ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+            [userId, email, name, username, googleId, picture] // Add username parameter
           );
           user = newUser;
           console.log('Created new Google user:', userId);
