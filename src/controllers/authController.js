@@ -491,141 +491,150 @@ async deleteUser(req, res) {
   }
 }
   
-  // Login user with email OR phone number - WITH AGENCY INFO
-  async login(req, res) {
-    try {
-      console.log('Login request received:', {
-        body: req.body,
-        headers: {
-          origin: req.headers.origin,
-          'content-type': req.headers['content-type']
-        }
-      });
-      
-      const { email, phone_number, password } = req.body;
-      
-      // Validate that either email or phone is provided
-      if (!email && !phone_number) {
-        return res.status(400).json({
-          success: false,
-          message: 'Either email or phone number is required'
-        });
+// Login user with email OR phone number - WITH AGENCY INFO
+async login(req, res) {
+  try {
+    console.log('Login request received:', {
+      body: req.body,
+      headers: {
+        origin: req.headers.origin,
+        'content-type': req.headers['content-type']
       }
-      
-      if (!password) {
-        return res.status(400).json({
-          success: false,
-          message: 'Password is required'
-        });
-      }
-      
-      // Check if user exists
-      let userQuery = 'SELECT * FROM users WHERE ';
-      let queryParam;
-      
-      if (email) {
-        userQuery += 'email = $1';
-        queryParam = email;
-      } else {
-        userQuery += 'phone_number = $1';
-        queryParam = phone_number;
-      }
-      
-      const user = await db.query(userQuery, [queryParam]);
-      
-      if (user.rows.length === 0) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid credentials'
-        });
-      }
-      
-      // Check password
-      const isMatch = await bcrypt.compare(password, user.rows[0].password_hash);
-      
-      if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid credentials'
-        });
-      }
-      
-      // Update last login
-      await db.query(
-        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-        [user.rows[0].id]
-      );
-      
-      // Get agency information for the user
-      const agencyInfo = await db.query(
-        `SELECT 
-          ac.agency_id,
-          a.name as agency_name,
-          a.agency_notes,
-          a.status as agency_status,
-          a.address as agency_address,
-          ac.created_at as agency_contact_created
-        FROM agency_contacts ac
-        JOIN agencies a ON ac.agency_id = a.id
-        WHERE ac.user_id = $1`,
-        [user.rows[0].id]
-      );
-      
-      // Generate JWT token
-      const token = jwt.sign(
-        { id: user.rows[0].id },
-        process.env.JWT_SECRET,
-        { expiresIn: '1d' }
-      );
-      
-      // Set the token as a cookie
-      res.cookie('auth_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
-        path: '/'
-      });
-      
-      console.log('Login successful - cookie set');
-      
-      // Prepare user object with agency information
-      const userResponse = {
-        id: user.rows[0].id,
-        username: user.rows[0].username,
-        email: user.rows[0].email,
-        phone_number: user.rows[0].phone_number,
-        full_name: user.rows[0].full_name,
-        is_admin: user.rows[0].is_admin,
-        is_master_admin: user.rows[0].is_master_admin,
-        is_agency_user: user.rows[0].is_agency_user,
-        profile_picture: user.rows[0].profile_picture,
-        // Add agency information
-        agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
-        agency_info: agencyInfo.rows.length > 0 ? {
-          id: agencyInfo.rows[0].agency_id,
-          name: agencyInfo.rows[0].agency_name,
-          notes: agencyInfo.rows[0].agency_notes,
-          status: agencyInfo.rows[0].agency_status,
-          address: agencyInfo.rows[0].agency_address,
-          contact_created_at: agencyInfo.rows[0].agency_contact_created
-        } : null
-      };
-      
-      return res.status(200).json({
-        success: true,
-        user: userResponse
-      });
-      
-    } catch (error) {
-      console.error('Error logging in:', error);
-      return res.status(500).json({
+    });
+    
+    const { email, phone_number, password } = req.body;
+    
+    // Validate that either email or phone is provided
+    if (!email && !phone_number) {
+      return res.status(400).json({
         success: false,
-        message: 'Server error logging in',
-        error: error.message
+        message: 'Either email or phone number is required'
       });
     }
+    
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required'
+      });
+    }
+    
+    // Check if user exists
+    let userQuery = 'SELECT * FROM users WHERE ';
+    let queryParam;
+    
+    if (email) {
+      userQuery += 'email = $1';
+      queryParam = email;
+    } else {
+      userQuery += 'phone_number = $1';
+      queryParam = phone_number;
+    }
+    
+    const user = await db.query(userQuery, [queryParam]);
+    
+    if (user.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+    
+    // ADD THIS CHECK HERE - after finding user, before password check
+    if (user.rows[0].google_id && !user.rows[0].password_hash) {
+      return res.status(400).json({
+        success: false,
+        message: 'This account uses Google Sign-In. Please use the Google login option.',
+        loginMethod: 'google_oauth'
+      });
+    }
+    
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.rows[0].password_hash);
+    
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+    
+    // Update last login
+    await db.query(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.rows[0].id]
+    );
+    
+    // Get agency information for the user
+    const agencyInfo = await db.query(
+      `SELECT 
+        ac.agency_id,
+        a.name as agency_name,
+        a.agency_notes,
+        a.status as agency_status,
+        a.address as agency_address,
+        ac.created_at as agency_contact_created
+      FROM agency_contacts ac
+      JOIN agencies a ON ac.agency_id = a.id
+      WHERE ac.user_id = $1`,
+      [user.rows[0].id]
+    );
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.rows[0].id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+    
+    // Set the token as a cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      path: '/'
+    });
+    
+    console.log('Login successful - cookie set');
+    
+    // Prepare user object with agency information
+    const userResponse = {
+      id: user.rows[0].id,
+      username: user.rows[0].username,
+      email: user.rows[0].email,
+      phone_number: user.rows[0].phone_number,
+      full_name: user.rows[0].full_name,
+      is_admin: user.rows[0].is_admin,
+      is_master_admin: user.rows[0].is_master_admin,
+      is_agency_user: user.rows[0].is_agency_user,
+      profile_picture: user.rows[0].profile_picture,
+      // Add agency information
+      agency_id: agencyInfo.rows.length > 0 ? agencyInfo.rows[0].agency_id : null,
+      agency_info: agencyInfo.rows.length > 0 ? {
+        id: agencyInfo.rows[0].agency_id,
+        name: agencyInfo.rows[0].agency_name,
+        notes: agencyInfo.rows[0].agency_notes,
+        status: agencyInfo.rows[0].agency_status,
+        address: agencyInfo.rows[0].agency_address,
+        contact_created_at: agencyInfo.rows[0].agency_contact_created
+      } : null
+    };
+    
+    return res.status(200).json({
+      success: true,
+      user: userResponse
+    });
+    
+  } catch (error) {
+    console.error('Error logging in:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error logging in',
+      error: error.message
+    });
   }
+}
 
   async adminLogin(req, res) {
     const { email, password } = req.body;
