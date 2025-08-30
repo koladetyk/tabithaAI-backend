@@ -44,13 +44,10 @@ router.get('/latest-referred', isAuthenticated, (req, res, next) => {
   });
 }, reportController.getLatestReferredReports);
 
-// Reanalyze a report with enhanced AI
-router.post('/:id/reanalyze', isAuthenticated, reportController.reanalyzeReport);
+// REMOVED: reanalyze route since AI functionality was removed
 
 // Get individual report by ID - MOVED AFTER specific routes
 router.get('/:id', isAuthenticated, reportController.getReportById);
-
-// CHANGE THIS SECTION:
 
 // ENHANCED: Create new report with array structure support
 router.post('/',
@@ -136,6 +133,5 @@ router.patch('/:id/archive', isAuthenticated, reportController.archiveReport);
 
 // Delete report (admin only)
 router.delete('/:id', isAuthenticated, isAdmin, reportController.deleteReport);
-
 
 module.exports = router;

@@ -13,13 +13,13 @@ dotenv.config();
 const authRoutes = require('./routes/authRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const evidenceRoutes = require('./routes/evidenceRoutes');
-const serviceProviderRoutes = require('./routes/serviceProviderRoutes');
+// REMOVED: serviceProviderRoutes (table deleted)
 const notificationRoutes = require('./routes/notificationRoutes');
-const voiceReportRoutes = require('./routes/voiceReportRoutes');
+// REMOVED: voiceReportRoutes (likely AI-related functionality)
 const passport = require('./config/googleAuth');
 //const googleAuthRoutes = require('./routes/googleAuthRoutes');
 const referralRoutes = require('./routes/referralRoutes');
-const resourceRoutes = require('./routes/resourceRoutes');
+// REMOVED: resourceRoutes (table deleted)
 const agencyRoutes = require('./routes/agencyRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
@@ -91,12 +91,12 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1', evidenceRoutes);
-app.use('/api/v1/providers', serviceProviderRoutes);
+// REMOVED: serviceProviderRoutes (table deleted)
 app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/voice-reports', voiceReportRoutes);
+// REMOVED: voiceReportRoutes (likely AI-related functionality)
 //app.use('/api/v1/auth', googleAuthRoutes);
 app.use('/api/v1', referralRoutes);
-app.use('/api/v1', resourceRoutes);
+// REMOVED: resourceRoutes (table deleted)
 app.use('/api/v1/agencies', agencyRoutes);
 app.use('/api/v1/admin', adminRoutes);
 
@@ -128,36 +128,7 @@ app.get('/api/v1/test', (req, res) => {
   return res.json({ success: true, message: 'Test route works!' });
 });
 
-// Test route for AI services
-app.post('/api/v1/test/ai', require('./middleware/auth').isAuthenticated, async (req, res) => {
-  try {
-    const enhancedAiService = require('./services/enhancedAiService');
-    const { text, language = 'en' } = req.body;
-    
-    if (!text) {
-      return res.status(400).json({
-        success: false,
-        message: 'Text is required'
-      });
-    }
-    
-    console.log(`Testing AI processing with${process.env.USE_MOCK_AI === 'true' ? ' mock' : ' real'} implementation`);
-    const result = await enhancedAiService.processWithAI(text, language);
-    
-    return res.status(200).json({
-      success: true,
-      result,
-      isMock: process.env.USE_MOCK_AI === 'true'
-    });
-  } catch (error) {
-    console.error('Error testing AI processing:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Error testing AI processing',
-      error: error.message
-    });
-  }
-});
+// REMOVED: AI test route since AI functionality was removed
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -174,7 +145,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`AI Mode: ${process.env.USE_MOCK_AI === 'true' ? 'Mock Implementation' : 'Real APIs'}`);
 });
 
 // Add at the very bottom of your app.js, just before module.exports
