@@ -1,14 +1,12 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../config/database');
-const { processWithAI, recordInteraction } = require('../services/enhancedAiService');
 const notificationService = require('../services/notificationService');
 const storageService = require('../services/storageService');
 const evidenceController = require('./evidenceController');
 
 class ReportController {
-  
 
-// Fixed getReportById method with agency user access
+// Fixed getReportById method with agency user access and organized evidence
 async getReportById(req, res) {
   try {
     const reportId = req.params.id;
@@ -136,7 +134,7 @@ async getReportById(req, res) {
   }
 }
 
-// Fixed createReport method with proper metadata (no contact info in evidence metadata)
+// Simplified createReport method with AI removed
 async createReport(req, res) {
   try {
     const {
@@ -175,36 +173,8 @@ async createReport(req, res) {
     // Generate new UUID for report
     const reportId = uuidv4();
     
-    // Process with AI if there's a note or audio transcriptions
-    let aiProcessed = false;
-    let emotionalContext = null;
-    let aiResult = null;
-    let processingTime = null;
-    
-    // Combine text for AI analysis
-    let textToAnalyze = note || '';
-    if (parsedAudioFiles.length > 0) {
-      const transcriptions = parsedAudioFiles
-        .filter(audio => audio.transcription)
-        .map(audio => audio.transcription)
-        .join(' ');
-      textToAnalyze += ' ' + transcriptions;
-    }
-    
-    if (textToAnalyze.trim()) {
-      // Use enhanced AI service with Llama3
-      aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
-      
-      if (aiResult) {
-        aiProcessed = true;
-        emotionalContext = aiResult.emotionalContext || null;
-        processingTime = aiResult.processingTime || null;
-      }
-    }
-    
-    // Determine incident type from AI if not provided
-    const finalIncidentType = incident_type || 
-                            (aiResult?.structuredData?.incidentType || 'general incident');
+    // Determine incident type (default if not provided)
+    const finalIncidentType = incident_type || 'general incident';
     
     // Create contact info object
     const contactInfo = {
@@ -215,7 +185,7 @@ async createReport(req, res) {
 
     const title = `Case-${reportId.slice(0, 8)}`;
     
-    // Create new report in database
+    // Create new report in database (AI fields removed)
     const newReport = await db.query(
       `INSERT INTO reports (
         id, 
@@ -228,14 +198,9 @@ async createReport(req, res) {
         language,
         anonymous,
         confidentiality_level,
-        original_input_type,
-        ai_processed,
-        emotional_context,
         contact_info
       ) VALUES (
-        $1, 
-        $2, 
-        $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
       ) RETURNING *`,
       [
         reportId,
@@ -244,35 +209,13 @@ async createReport(req, res) {
         incident_date || new Date(),
         address ? { address } : {},
         finalIncidentType,
-        note || textToAnalyze || 'Report with media files',
+        note || 'Report with media files',
         language || 'en',
         anonymous || false,
         confidentiality_level || 1,
-        parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
-        aiProcessed,
-        emotionalContext,
         contactInfo
       ]
     );
-    
-    // Record the AI interaction AFTER report creation
-    if (aiResult) {
-      try {
-        await recordInteraction(
-          anonymous ? null : req.user?.id,
-          reportId,
-          'array_structure_processing',
-          textToAnalyze.substring(0, 200),
-          JSON.stringify(aiResult),
-          aiResult.confidence || 0.7,
-          processingTime,
-          'llama3'
-        );
-      } catch (interactionError) {
-        console.error('Error recording AI interaction:', interactionError);
-        // Continue even if recording fails
-      }
-    }
     
     // Create email verification for anonymous reports with random 5-digit token
     let verificationCode = null;
@@ -306,7 +249,7 @@ async createReport(req, res) {
       }
     }
     
-    // Handle audio files array - FIXED metadata
+    // Handle audio files array
     const evidenceItems = [];
     for (const audioFile of parsedAudioFiles) {
       const evidenceId = uuidv4();
@@ -341,7 +284,7 @@ async createReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // Handle images/videos array - FIXED metadata
+    // Handle images/videos array
     for (const mediaFile of parsedImagesVideos) {
       const evidenceId = uuidv4();
       
@@ -383,7 +326,7 @@ async createReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // Handle uploaded files if any - FIXED metadata
+    // Handle uploaded files if any
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const evidenceId = uuidv4();
@@ -451,24 +394,19 @@ async createReport(req, res) {
       );
     }
     
-    // Prepare response
+    // Prepare response (AI analysis removed)
     const responseData = {
       success: true,
       data: {
         report: {
-              ...newReport.rows[0],
-               title
-             },
+          ...newReport.rows[0],
+          title
+        },
         evidence: evidenceItems,
         audio_files_processed: parsedAudioFiles.length,
         images_videos_processed: parsedImagesVideos.length,
         uploaded_files_processed: req.files?.length || 0
       },
-      aiAnalysis: aiResult ? {
-        suggestedServices: aiResult.suggestedServices,
-        recommendations: aiResult.recommendations,
-        riskLevel: aiResult.structuredData?.riskLevel
-      } : null,
       message: `Report created successfully with ${evidenceItems.length} evidence items`
     };
     
@@ -493,14 +431,9 @@ async createReport(req, res) {
   }
 }
 
-// Fixed createGuestReport method with enhanced file processing and debugging
+// Simplified createGuestReport method with AI removed
 async createGuestReport(req, res) {
   try {
-    console.log('DEBUG - Full request body:', req.body);
-    console.log('DEBUG - req.files structure:', req.files);
-    console.log('DEBUG - req.files type:', typeof req.files);
-    console.log('DEBUG - req.files keys:', req.files ? Object.keys(req.files) : 'no files');
-    
     const {
       audio_files,        
       images_videos,      
@@ -516,12 +449,6 @@ async createGuestReport(req, res) {
     } = req.body;
 
     const phoneNumber = phoneNumberCamel || phoneNumberSnake;
-    
-    console.log('DEBUG - Destructured values:', {
-      email,
-      phoneNumber,
-      address
-    });
     
     if (!email && !phoneNumber) {
       return res.status(400).json({
@@ -541,34 +468,7 @@ async createGuestReport(req, res) {
     }
     
     const reportId = uuidv4();
-    
-    // AI processing (same as before)
-    let aiProcessed = false;
-    let emotionalContext = null;
-    let aiResult = null;
-    let processingTime = null;
-    
-    let textToAnalyze = note || '';
-    if (parsedAudioFiles.length > 0) {
-      const transcriptions = parsedAudioFiles
-        .filter(audio => audio.transcription)
-        .map(audio => audio.transcription)
-        .join(' ');
-      textToAnalyze += ' ' + transcriptions;
-    }
-    
-    if (textToAnalyze.trim()) {
-      aiResult = await processWithAI(textToAnalyze.trim(), language || 'en');
-      
-      if (aiResult) {
-        aiProcessed = true;
-        emotionalContext = aiResult.emotionalContext || null;
-        processingTime = aiResult.processingTime || null;
-      }
-    }
-    
-    const finalIncidentType = incident_type || 
-                            (aiResult?.structuredData?.incidentType || 'general incident');
+    const finalIncidentType = incident_type || 'general incident';
     
     const contactInfo = {
       email: email || null,
@@ -578,7 +478,7 @@ async createGuestReport(req, res) {
 
     const title = `Case-${reportId.slice(0, 8)}`;
     
-    // Create new report in database
+    // Create new report in database (AI fields removed)
     const newReport = await db.query(
       `INSERT INTO reports (
         id, 
@@ -591,11 +491,8 @@ async createGuestReport(req, res) {
         language,
         anonymous,
         confidentiality_level,
-        original_input_type,
-        ai_processed,
-        emotional_context,
         contact_info
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
       [
         reportId,
         title,
@@ -603,34 +500,13 @@ async createGuestReport(req, res) {
         incident_date || new Date(),
         address ? { address } : {},
         finalIncidentType,
-        note || textToAnalyze || 'Guest report with media files',
+        note || 'Guest report with media files',
         language || 'en',
         true,  
         confidentiality_level || 1,
-        parsedAudioFiles.length > 0 ? 'audio' : 'mixed',
-        aiProcessed,
-        emotionalContext,
         contactInfo
       ]
     );
-    
-    // Record AI interaction if applicable
-    if (aiResult) {
-      try {
-        await recordInteraction(
-          null,  
-          reportId,
-          'guest_array_processing',
-          textToAnalyze.substring(0, 200),
-          JSON.stringify(aiResult),
-          aiResult.confidence || 0.7,
-          processingTime,
-          'llama3'
-        );
-      } catch (interactionError) {
-        console.error('Error recording AI interaction:', interactionError);
-      }
-    }
     
     // Generate verification code
     let verificationCode = Math.floor(10000 + Math.random() * 90000).toString();
@@ -660,26 +536,20 @@ async createGuestReport(req, res) {
       console.error('Error creating email verification:', verificationError);
     }
     
-    // Handle audio files metadata - FIXED metadata
+    // Handle evidence items
     const evidenceItems = [];
+    
+    // Handle audio files
     for (const audioFile of parsedAudioFiles) {
       const evidenceId = uuidv4();
       
       const newEvidence = await db.query(
         `INSERT INTO evidence (
-          id,
-          report_id,
-          evidence_type,
-          file_path,
-          file_url,
-          description,
-          submitted_date,
-          metadata
+          id, report_id, evidence_type, file_path, file_url, description,
+          submitted_date, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
         [
-          evidenceId,
-          reportId,
-          'audio',
+          evidenceId, reportId, 'audio',
           audioFile.title || 'Audio File',
           audioFile.uri || null,
           audioFile.title || 'Audio evidence',
@@ -695,7 +565,7 @@ async createGuestReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // Handle images/videos metadata - FIXED metadata
+    // Handle images/videos
     for (const mediaFile of parsedImagesVideos) {
       const evidenceId = uuidv4();
       
@@ -709,19 +579,11 @@ async createGuestReport(req, res) {
       
       const newEvidence = await db.query(
         `INSERT INTO evidence (
-          id,
-          report_id,
-          evidence_type,
-          file_path,
-          file_url,
-          description,
-          submitted_date,
-          metadata
+          id, report_id, evidence_type, file_path, file_url, description,
+          submitted_date, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
         [
-          evidenceId,
-          reportId,
-          evidenceType,
+          evidenceId, reportId, evidenceType,
           mediaFile.title || 'Media File',
           mediaFile.uri || null,
           mediaFile.title || 'Media evidence',
@@ -736,36 +598,25 @@ async createGuestReport(req, res) {
       evidenceItems.push(newEvidence.rows[0]);
     }
     
-    // ENHANCED: Handle uploaded files with better detection - FIXED metadata
+    // Handle uploaded files
     let filesToProcess = [];
     
     if (req.files) {
       if (Array.isArray(req.files)) {
-        // Files normalized by middleware to array
         filesToProcess = req.files;
-        console.log('DEBUG - Files from normalized array:', filesToProcess.length);
       } else if (typeof req.files === 'object') {
-        // Files in object format (multiple fields)
         Object.keys(req.files).forEach(fieldName => {
-          console.log(`DEBUG - Processing field: ${fieldName}`);
           if (Array.isArray(req.files[fieldName])) {
             filesToProcess = filesToProcess.concat(req.files[fieldName]);
-            console.log(`DEBUG - Added ${req.files[fieldName].length} files from ${fieldName}`);
           } else if (req.files[fieldName]) {
-            // Single file in this field
             filesToProcess.push(req.files[fieldName]);
-            console.log(`DEBUG - Added 1 file from ${fieldName}`);
           }
         });
       }
     }
     
-    console.log(`DEBUG - Total files to process: ${filesToProcess.length}`);
-    
     if (filesToProcess.length > 0) {
       for (const file of filesToProcess) {
-        console.log(`DEBUG - Processing file: ${file.originalname} (${file.mimetype})`);
-        
         const evidenceId = uuidv4();
         
         // Determine evidence type based on file mime type
@@ -781,32 +632,18 @@ async createGuestReport(req, res) {
         try {
           // Upload file to cloud storage
           const fileUrl = await storageService.uploadFile(
-            file,
-            null,  // No user ID for guest reports
-            reportId,
-            evidenceType
+            file, null, reportId, evidenceType
           );
-          
-          console.log(`DEBUG - File uploaded successfully: ${fileUrl}`);
           
           // Create evidence record
           const newEvidence = await db.query(
             `INSERT INTO evidence (
-              id,
-              report_id,
-              evidence_type,
-              file_path,
-              file_url,
-              description,
-              submitted_date,
-              metadata
+              id, report_id, evidence_type, file_path, file_url, description,
+              submitted_date, metadata
             ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, $7) RETURNING *`,
             [
-              evidenceId,
-              reportId,
-              evidenceType,
-              file.originalname,
-              fileUrl,
+              evidenceId, reportId, evidenceType,
+              file.originalname, fileUrl,
               `Uploaded ${evidenceType}: ${file.originalname}`,
               {
                 original_name: file.originalname,
@@ -819,36 +656,25 @@ async createGuestReport(req, res) {
           );
           
           evidenceItems.push(newEvidence.rows[0]);
-          console.log(`DEBUG - Evidence record created: ${evidenceId}`);
           
         } catch (fileError) {
           console.error(`ERROR - Failed to process file ${file.originalname}:`, fileError);
-          // Continue processing other files
         }
       }
-    } else {
-      console.log('DEBUG - No files to process');
     }
-    
-    console.log(`DEBUG - Total evidence items created: ${evidenceItems.length}`);
     
     const responseData = {
       success: true,
       data: {
         report: {
-             ...newReport.rows[0],
-             title
-           },
+          ...newReport.rows[0],
+          title
+        },
         evidence: evidenceItems,
         audio_files_processed: parsedAudioFiles.length,
         images_videos_processed: parsedImagesVideos.length,
         uploaded_files_processed: filesToProcess.length
       },
-      aiAnalysis: aiResult ? {
-        suggestedServices: aiResult.suggestedServices,
-        recommendations: aiResult.recommendations,
-        riskLevel: aiResult.structuredData?.riskLevel
-      } : null,
       verificationInfo: {
         contact: email || phoneNumber,
         verificationCode: verificationCode,
@@ -877,10 +703,10 @@ async getAllReports(req, res) {
       limit = 10, 
       status, 
       incident_type,
-      date_range, // New: 7days, 30days, 90days, thisyear
-      start_date, // New: Custom date range start
-      end_date,   // New: Custom date range end
-      search      // New: Search by title or description
+      date_range,
+      start_date,
+      end_date,
+      search
     } = req.query;
     
     const offset = (page - 1) * limit;
@@ -938,10 +764,6 @@ async getAllReports(req, res) {
           dateCondition = 'created_at >= $' + (queryParams.length + 1);
           queryParams.push(yearStart.toISOString());
           break;
-          
-        default:
-          // Invalid date_range value, ignore
-          break;
       }
       
       if (dateCondition) {
@@ -949,14 +771,13 @@ async getAllReports(req, res) {
       }
     }
     
-    // Add custom date range filtering (overrides date_range if both provided)
+    // Add custom date range filtering
     if (start_date || end_date) {
       if (start_date) {
         conditions.push('created_at >= $' + (queryParams.length + 1));
         queryParams.push(new Date(start_date).toISOString());
       }
       if (end_date) {
-        // Add one day to end_date to include the entire end date
         const endDateTime = new Date(end_date);
         endDateTime.setDate(endDateTime.getDate() + 1);
         conditions.push('created_at < $' + (queryParams.length + 1));
@@ -964,7 +785,7 @@ async getAllReports(req, res) {
       }
     }
     
-    // Add search functionality (search in title and incident_description)
+    // Add search functionality
     if (search) {
       const searchTerm = `%${search.trim()}%`;
       conditions.push(
@@ -996,7 +817,6 @@ async getAllReports(req, res) {
     let reportsWithEvidence = reports.rows;
     
     if (reportIds.length > 0) {
-      // Get evidence counts for each report
       const evidenceQuery = `
         SELECT 
           report_id,
@@ -1073,44 +893,43 @@ async getAllReports(req, res) {
   }
 }
 
-  // Get reports by user ID
-  async getReportsByUserId(req, res) {
-    try {
-      const userId = req.params.userId;
-      
-      // Check if user has permission (only admin or the user themselves)
-      if (!req.user.is_admin && req.user.id !== userId) {
-        return res.status(403).json({
-          success: false,
-          message: 'Unauthorized access to these reports'
-        });
-      }
-      
-      // Fetch reports for the specified user
-      const reports = await db.query(
-        'SELECT * FROM reports WHERE user_id = $1 ORDER BY created_at DESC',
-        [userId]
-      );
-      
-      return res.status(200).json({
-        success: true,
-        count: reports.rows.length,
-        data: reports.rows
-      });
-    } catch (error) {
-      console.error('Error fetching user reports:', error);
-      return res.status(500).json({
+// Get reports by user ID
+async getReportsByUserId(req, res) {
+  try {
+    const userId = req.params.userId;
+    
+    // Check if user has permission (only admin or the user themselves)
+    if (!req.user.is_admin && req.user.id !== userId) {
+      return res.status(403).json({
         success: false,
-        message: 'Server error retrieving user reports',
-        error: error.message
+        message: 'Unauthorized access to these reports'
       });
     }
+    
+    // Fetch reports for the specified user
+    const reports = await db.query(
+      'SELECT * FROM reports WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
+    
+    return res.status(200).json({
+      success: true,
+      count: reports.rows.length,
+      data: reports.rows
+    });
+  } catch (error) {
+    console.error('Error fetching user reports:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving user reports',
+      error: error.message
+    });
   }
+}
 
-  // Get reports by email/phone for user assistance
+// Get reports by email/phone for user assistance
 async getReportsByContact(req, res) {
   try {
-    // Change from req.body to req.query for GET request
     const { email, phoneNumber } = req.query;
     
     if (!email && !phoneNumber) {
@@ -1143,14 +962,23 @@ async getReportsByContact(req, res) {
     
     const reports = await db.query(query, params);
     
-    // Include evidence with each report
+    // Include evidence with each report in organized format
     if (reports.rows.length > 0) {
       for (let i = 0; i < reports.rows.length; i++) {
-        const evidence = await db.query(
+        const evidenceResult = await db.query(
           'SELECT * FROM evidence WHERE report_id = $1',
           [reports.rows[i].id]
         );
-        reports.rows[i].evidence = evidence.rows;
+        
+        // Organize evidence by type
+        const organizedEvidence = {
+          audios: evidenceResult.rows.filter(e => e.evidence_type === 'audio'),
+          images: evidenceResult.rows.filter(e => e.evidence_type === 'image'),
+          videos: evidenceResult.rows.filter(e => e.evidence_type === 'video'),
+          documents: evidenceResult.rows.filter(e => e.evidence_type === 'document')
+        };
+        
+        reports.rows[i].evidence = organizedEvidence;
       }
     }
     
@@ -1169,175 +997,70 @@ async getReportsByContact(req, res) {
   }
 }
 
-  // Analyze existing report with enhanced AI
-  async reanalyzeReport(req, res) {
-    try {
-      const reportId = req.params.id;
-      
-      // Check if report exists
-      const existingReport = await db.query(
-        'SELECT * FROM reports WHERE id = $1',
-        [reportId]
-      );
-      
-      if (existingReport.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check permissions
-      if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to reanalyze this report'
-        });
-      }
-      
-      // Check if the report has a description to analyze
-      if (!existingReport.rows[0].incident_description) {
-        return res.status(400).json({
-          success: false,
-          message: 'Report has no incident description to analyze'
-        });
-      }
-      
-      // Use enhanced AI service to reanalyze
-      const aiResult = await processWithAI(
-        existingReport.rows[0].incident_description,
-        existingReport.rows[0].language || 'en'
-      );
-      
-      if (!aiResult) {
-        return res.status(500).json({
-          success: false,
-          message: 'AI analysis failed'
-        });
-      }
-      
-      // Update report with new analysis
-      const updatedReport = await db.query(
-        `UPDATE reports SET
-          emotional_context = $1,
-          ai_processed = true,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-        RETURNING *`,
-        [aiResult.emotionalContext || {}, reportId]
-      );
-      
-      // Record the AI interaction
-      await recordInteraction(
-        existingReport.rows[0].user_id,
-        reportId,
-        'reanalysis',
-        existingReport.rows[0].incident_description.substring(0, 200),
-        JSON.stringify(aiResult),
-        aiResult.confidence || 0.7,
-        aiResult.processingTime || null,
-        aiResult.model || 'ai_model'
-      );
-      
-      // Send notification about reanalysis
-      if (existingReport.rows[0].user_id) {
-        await notificationService.createAndSendNotification(
-          existingReport.rows[0].user_id,
-          'Report Reanalyzed',
-          'Your report has been reanalyzed with our enhanced AI',
-          'report_reanalyzed',
-          'report',
-          reportId
-        );
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: updatedReport.rows[0],
-        aiAnalysis: {
-          emotionalContext: aiResult.emotionalContext,
-          structuredData: aiResult.structuredData,
-          suggestedServices: aiResult.suggestedServices,
-          recommendations: aiResult.recommendations,
-          confidence: aiResult.confidence
-        },
-        message: 'Report reanalyzed successfully'
-      });
-    } catch (error) {
-      console.error('Error reanalyzing report:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error reanalyzing report',
-        error: error.message
+// LEGACY: Create audio report (redirects to main createReport)
+async createAudioReport(req, res) {
+  try {
+    // Transform legacy audio format to new array format
+    const {
+      audio_title,
+      audio_transcription,
+      contact_info,
+      ...otherFields
+    } = req.body;
+    
+    // Create audio_files array from legacy fields
+    const audio_files = [];
+    if (audio_title || audio_transcription) {
+      audio_files.push({
+        title: audio_title || 'Audio Report',
+        uri: req.body.audio_uri || null,
+        transcription: audio_transcription || null
       });
     }
-  }
-
-  // ENHANCED: Create audio report (legacy endpoint - redirects to main createReport)
-  async createAudioReport(req, res) {
-    try {
-      // Transform legacy audio format to new array format
-      const {
-        audio_title,
-        audio_transcription,
-        contact_info,
-        ...otherFields
-      } = req.body;
-      
-      // Create audio_files array from legacy fields
-      const audio_files = [];
-      if (audio_title || audio_transcription) {
-        audio_files.push({
-          title: audio_title || 'Audio Report',
-          uri: req.body.audio_uri || null,
-          transcription: audio_transcription || null
-        });
+    
+    // Extract contact info
+    let email = null;
+    let phoneNumber = null;
+    let address = null;
+    
+    if (contact_info) {
+      // Simple email detection
+      if (contact_info.includes('@')) {
+        email = contact_info;
       }
-      
-      // Extract contact info
-      let email = null;
-      let phoneNumber = null;
-      let address = null;
-      
-      if (contact_info) {
-        // Simple email detection
-        if (contact_info.includes('@')) {
-          email = contact_info;
-        }
-        // Simple phone detection
-        else if (contact_info.match(/[\d\-\+\(\)\s]+/)) {
-          phoneNumber = contact_info;
-        } else {
-          address = contact_info;
-        }
+      // Simple phone detection
+      else if (contact_info.match(/[\d\-\+\(\)\s]+/)) {
+        phoneNumber = contact_info;
+      } else {
+        address = contact_info;
       }
-      
-      // Transform request
-      const transformedBody = {
-        ...otherFields,
-        audio_files,
-        images_videos: [],
-        note: req.body.incident_description || audio_transcription,
-        email,
-        phoneNumber,
-        address
-      };
-      
-      // Update request body
-      req.body = transformedBody;
-      
-      // Call main createReport method
-      return await this.createReport(req, res);
-    } catch (error) {
-      console.error('Error creating audio report:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error creating audio report',
-        error: error.message
-      });
     }
+    
+    // Transform request
+    const transformedBody = {
+      ...otherFields,
+      audio_files,
+      images_videos: [],
+      note: req.body.incident_description || audio_transcription,
+      email,
+      phoneNumber,
+      address
+    };
+    
+    // Update request body
+    req.body = transformedBody;
+    
+    // Call main createReport method
+    return await this.createReport(req, res);
+  } catch (error) {
+    console.error('Error creating audio report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating audio report',
+      error: error.message
+    });
   }
-
+}
 
 // Get reports by verification token only (no email needed) - with organized evidence
 async getGuestReportsByToken(req, res) {
@@ -1452,30 +1175,30 @@ async getGuestReportsByToken(req, res) {
   }
 }
 
-  async getDashboardStats(req, res) {
-    try {
-      const [users, totalReports, pendingReports, completedReports] = await Promise.all([
-        db.query('SELECT COUNT(*) FROM users'),
-        db.query('SELECT COUNT(*) FROM reports'),
-        db.query("SELECT COUNT(*) FROM reports WHERE status = 'pending'"),
-        db.query("SELECT COUNT(*) FROM reports WHERE status = 'completed'")
-      ]);
-  
-      return res.status(200).json({
-        success: true,
-        data: {
-          total_users: parseInt(users.rows[0].count),
-          total_reports: parseInt(totalReports.rows[0].count),
-          pending_reports: parseInt(pendingReports.rows[0].count),
-          completed_reports: parseInt(completedReports.rows[0].count)
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, message: 'Dashboard error' });
-    }
-  }  
+async getDashboardStats(req, res) {
+  try {
+    const [users, totalReports, pendingReports, completedReports] = await Promise.all([
+      db.query('SELECT COUNT(*) FROM users'),
+      db.query('SELECT COUNT(*) FROM reports'),
+      db.query("SELECT COUNT(*) FROM reports WHERE status = 'pending'"),
+      db.query("SELECT COUNT(*) FROM reports WHERE status = 'completed'")
+    ]);
 
-// Get reports by email for guest users
+    return res.status(200).json({
+      success: true,
+      data: {
+        total_users: parseInt(users.rows[0].count),
+        total_reports: parseInt(totalReports.rows[0].count),
+        pending_reports: parseInt(pendingReports.rows[0].count),
+        completed_reports: parseInt(completedReports.rows[0].count)
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Dashboard error' });
+  }
+}
+
+// Get reports by email for guest users - with organized evidence
 async getGuestReportsByEmail(req, res) {
   try {
     const email = req.params.email;
@@ -1513,13 +1236,22 @@ async getGuestReportsByEmail(req, res) {
       });
     }
     
-    // Include evidence with each report
+    // Include evidence with each report in organized format
     for (let i = 0; i < reports.rows.length; i++) {
-      const evidence = await db.query(
+      const evidenceResult = await db.query(
         'SELECT * FROM evidence WHERE report_id = $1',
         [reports.rows[i].id]
       );
-      reports.rows[i].evidence = evidence.rows;
+      
+      // Organize evidence by type
+      const organizedEvidence = {
+        audios: evidenceResult.rows.filter(e => e.evidence_type === 'audio'),
+        images: evidenceResult.rows.filter(e => e.evidence_type === 'image'),
+        videos: evidenceResult.rows.filter(e => e.evidence_type === 'video'),
+        documents: evidenceResult.rows.filter(e => e.evidence_type === 'document')
+      };
+      
+      reports.rows[i].evidence = organizedEvidence;
     }
     
     return res.status(200).json({
@@ -1538,262 +1270,220 @@ async getGuestReportsByEmail(req, res) {
   }
 }
 
-  // Public access: read-only report info
-  async getPublicReportById(req, res) {
-    try {
-      const reportId = req.params.id;
-      const report = await db.query(
-        'SELECT id, title, incident_type, incident_description, report_date, location_data FROM reports WHERE id = $1',
-        [reportId]
-      );
+// Public access: read-only report info
+async getPublicReportById(req, res) {
+  try {
+    const reportId = req.params.id;
+    const report = await db.query(
+      'SELECT id, title, incident_type, incident_description, incident_date, location_data FROM reports WHERE id = $1',
+      [reportId]
+    );
 
-      if (report.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'Report not found' });
-      }
-
-      return res.status(200).json({ success: true, data: report.rows[0] });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ success: false, message: 'Error retrieving report' });
+    if (report.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Report not found' });
     }
+
+    return res.status(200).json({ success: true, data: report.rows[0] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: 'Error retrieving report' });
   }
+}
 
-
-  // Update report
-  async updateReport(req, res) {
-    try {
-      const reportId = req.params.id;
-      const {
+// Update report (AI functionality removed)
+async updateReport(req, res) {
+  try {
+    const reportId = req.params.id;
+    const {
+      incident_date,
+      location_data,
+      incident_type,
+      incident_description,
+      language
+    } = req.body;
+    
+    // Check if report exists
+    const existingReport = await db.query(
+      'SELECT * FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (existingReport.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+    
+    // Check if user has permission to update this report
+    if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this report'
+      });
+    }
+    
+    // Determine incident type if needed
+    const finalIncidentType = incident_type || existingReport.rows[0].incident_type;
+    
+    // Update report (AI fields removed)
+    const updatedReport = await db.query(
+      `UPDATE reports SET 
+        incident_date = COALESCE($1, incident_date),
+        location_data = COALESCE($2, location_data),
+        incident_type = COALESCE($3, incident_type),
+        incident_description = COALESCE($4, incident_description),
+        language = COALESCE($5, language),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $6
+      RETURNING *`,
+      [
         incident_date,
-        location_data,
-        incident_type,
+        location_data ? location_data : existingReport.rows[0].location_data,
+        finalIncidentType,
         incident_description,
-        language
-      } = req.body;
-      
-      // Check if report exists
-      const existingReport = await db.query(
-        'SELECT * FROM reports WHERE id = $1',
-        [reportId]
+        language,
+        reportId
+      ]
+    );
+    
+    // Send notification if the report was updated
+    if (existingReport.rows[0].user_id) {
+      await notificationService.createAndSendNotification(
+        existingReport.rows[0].user_id,
+        'Report Updated',
+        'Your report has been updated',
+        'report_updated',
+        'report',
+        reportId
       );
-      
-      if (existingReport.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check if user has permission to update this report
-      if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to update this report'
-        });
-      }
-      
-      // Process with AI if description is updated
-      let aiProcessed = existingReport.rows[0].ai_processed;
-      let emotionalContext = existingReport.rows[0].emotional_context;
-      let aiResult = null;
-      
-      if (incident_description && incident_description !== existingReport.rows[0].incident_description) {
-        aiResult = await processWithAI(
-          incident_description, 
-          language || existingReport.rows[0].language
-        );
-        
-        if (aiResult) {
-          aiProcessed = true;
-          emotionalContext = aiResult.emotionalContext || emotionalContext;
-          
-          // Record the AI interaction
-          await recordInteraction(
-            existingReport.rows[0].user_id,
-            reportId,
-            'text_processing_update',
-            incident_description.substring(0, 200),
-            JSON.stringify(aiResult),
-            aiResult.confidence || 0.7,
-            aiResult.processingTime || null,
-            'llama3'
-          );
-        }
-      }
-      
-      // Determine incident type if needed
-      const finalIncidentType = incident_type || 
-                              (aiResult?.structuredData?.incidentType) || 
-                              existingReport.rows[0].incident_type;
-      
-      // Update report
-      const updatedReport = await db.query(
-        `UPDATE reports SET 
-          incident_date = COALESCE($1, incident_date),
-          location_data = COALESCE($2, location_data),
-          incident_type = COALESCE($3, incident_type),
-          incident_description = COALESCE($4, incident_description),
-          language = COALESCE($5, language),
-          ai_processed = $6,
-          emotional_context = COALESCE($7, emotional_context),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $8
-        RETURNING *`,
-        [
-          incident_date,
-          location_data ? location_data : existingReport.rows[0].location_data,
-          finalIncidentType,
-          incident_description,
-          language,
-          aiProcessed,
-          emotionalContext,
-          reportId
-        ]
-      );
-      
-      // Send notification if the report was updated
-      if (existingReport.rows[0].user_id) {
-        await notificationService.createAndSendNotification(
-          existingReport.rows[0].user_id,
-          'Report Updated',
-          'Your report has been updated',
-          'report_updated',
-          'report',
-          reportId
-        );
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: updatedReport.rows[0],
-        aiAnalysis: aiResult ? {
-          suggestedServices: aiResult.suggestedServices,
-          recommendations: aiResult.recommendations,
-          riskLevel: aiResult.structuredData?.riskLevel
-        } : null,
-        message: 'Report updated successfully'
-      });
-    } catch (error) {
-      console.error('Error updating report:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error updating report',
-        error: error.message
-      });
     }
+    
+    return res.status(200).json({
+      success: true,
+      data: updatedReport.rows[0],
+      message: 'Report updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error updating report',
+      error: error.message
+    });
   }
+}
 
-  // Archive report
-  async archiveReport(req, res) {
-    try {
-      const reportId = req.params.id;
-      
-      // Check if report exists
-      const existingReport = await db.query(
-        'SELECT * FROM reports WHERE id = $1',
-        [reportId]
-      );
-      
-      if (existingReport.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Check if user has permission to archive this report
-      if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have permission to archive this report'
-        });
-      }
-      
-      // Archive report (we'll use status = 'archived' instead of deleting)
-      const archivedReport = await db.query(
-        `UPDATE reports SET
-          status = 'archived',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-        RETURNING *`,
-        [reportId]
-      );
-      
-      // Send notification if the report was archived
-      if (existingReport.rows[0].user_id) {
-        await notificationService.createAndSendNotification(
-          existingReport.rows[0].user_id,
-          'Report Archived',
-          'Your report has been archived',
-          'report_archived',
-          'report',
-          reportId
-        );
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: archivedReport.rows[0],
-        message: 'Report archived successfully'
-      });
-    } catch (error) {
-      console.error('Error archiving report:', error);
-      return res.status(500).json({
+// Archive report
+async archiveReport(req, res) {
+  try {
+    const reportId = req.params.id;
+    
+    // Check if report exists
+    const existingReport = await db.query(
+      'SELECT * FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (existingReport.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'Server error archiving report',
-        error: error.message
+        message: 'Report not found'
       });
     }
+    
+    // Check if user has permission to archive this report
+    if (!req.user.is_admin && req.user.id !== existingReport.rows[0].user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to archive this report'
+      });
+    }
+    
+    // Archive report
+    const archivedReport = await db.query(
+      `UPDATE reports SET
+        status = 'archived',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *`,
+      [reportId]
+    );
+    
+    // Send notification if the report was archived
+    if (existingReport.rows[0].user_id) {
+      await notificationService.createAndSendNotification(
+        existingReport.rows[0].user_id,
+        'Report Archived',
+        'Your report has been archived',
+        'report_archived',
+        'report',
+        reportId
+      );
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: archivedReport.rows[0],
+      message: 'Report archived successfully'
+    });
+  } catch (error) {
+    console.error('Error archiving report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error archiving report',
+      error: error.message
+    });
   }
+}
 
-  // Delete report (admin only)
-  async deleteReport(req, res) {
-    try {
-      const reportId = req.params.id;
-      
-      // Check if user is admin
-      if (!req.user.is_admin) {
-        return res.status(403).json({
-          success: false,
-          message: 'Admin privileges required to delete reports'
-        });
-      }
-      
-      // Check if report exists
-      const existingReport = await db.query(
-        'SELECT * FROM reports WHERE id = $1',
-        [reportId]
-      );
-      
-      if (existingReport.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Report not found'
-        });
-      }
-      
-      // Delete related evidence and referrals first (due to foreign key constraints)
-      await db.query('DELETE FROM evidence WHERE report_id = $1', [reportId]);
-      await db.query('DELETE FROM referrals WHERE report_id = $1', [reportId]);
-      await db.query('DELETE FROM ai_interactions WHERE report_id = $1', [reportId]);
-      await db.query('DELETE FROM report_email_verification WHERE report_id = $1', [reportId]);
-      
-      // Delete the report
-      await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Report and all related data deleted successfully'
-      });
-    } catch (error) {
-      console.error('Error deleting report:', error);
-      return res.status(500).json({
+// Delete report (admin only)
+async deleteReport(req, res) {
+  try {
+    const reportId = req.params.id;
+    
+    // Check if user is admin
+    if (!req.user.is_admin) {
+      return res.status(403).json({
         success: false,
-        message: 'Server error deleting report',
-        error: error.message
+        message: 'Admin privileges required to delete reports'
       });
     }
+    
+    // Check if report exists
+    const existingReport = await db.query(
+      'SELECT * FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (existingReport.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+    
+    // Delete related evidence and referrals first
+    await db.query('DELETE FROM evidence WHERE report_id = $1', [reportId]);
+    await db.query('DELETE FROM referrals WHERE report_id = $1', [reportId]);
+    await db.query('DELETE FROM report_email_verification WHERE report_id = $1', [reportId]);
+    
+    // Delete the report
+    await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Report and all related data deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting report:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error deleting report',
+      error: error.message
+    });
   }
+}
 
 // Get latest 100 reports referred to agencies (for admin and agency users)
 async getLatestReferredReports(req, res) {
@@ -1917,30 +1607,30 @@ async getLatestReferredReports(req, res) {
   }
 }
 
-  // NEW: Get the latest 100 reports (for overview/dashboard)
-  async getLatestReports(req, res) {
-    try {
-      const result = await db.query(`
-        SELECT * FROM reports 
-        ORDER BY created_at DESC
-        LIMIT 100
-      `);
+// Get the latest 100 reports (for overview/dashboard)
+async getLatestReports(req, res) {
+  try {
+    const result = await db.query(`
+      SELECT * FROM reports 
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
 
-      return res.status(200).json({
-        success: true,
-        count: result.rows.length,
-        data: result.rows
-      });
-    } catch (error) {
-      console.error('Error fetching latest reports:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error fetching latest reports',
-        error: error.message
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching latest reports:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error fetching latest reports',
+      error: error.message
+    });
   }
-  
+}
+
 // Enhanced updateReportStatus method with agency user support
 async updateReportStatus(req, res) {
   try {
@@ -2045,7 +1735,7 @@ async updateReportStatus(req, res) {
       [finalStatus, reportId]
     );
     
-    // OPTIONAL: Also update referral status if this is an agency user
+    // Also update referral status if this is an agency user
     if (req.user.is_agency_user) {
       try {
         const userAgency = await db.query(
@@ -2071,10 +1761,13 @@ async updateReportStatus(req, res) {
     
     // Send notification if user isn't anonymous and status has changed
     if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
-      await notificationService.sendReportStatusNotification(
+      await notificationService.createAndSendNotification(
         existingReport.rows[0].user_id,
-        reportId,
-        finalStatus
+        'Report Status Updated',
+        `Your report status has been updated to "${finalStatus}"`,
+        'status_update',
+        'report',
+        reportId
       );
     }
     
@@ -2099,7 +1792,6 @@ async updateReportStatus(req, res) {
     });
   }
 }
-
 
 }
 
