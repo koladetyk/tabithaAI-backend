@@ -1729,11 +1729,10 @@ async updateReportStatus(req, res) {
       `UPDATE reports SET
         status = $1,
         status_notes = $2,
-        status_updated_by = $3,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      WHERE id = $3
       RETURNING *`,
-      [finalStatus, statusNotes, req.user.id, reportId]
+      [finalStatus, statusNotes, reportId]
     );
     
     return res.status(200).json({
