@@ -1697,10 +1697,6 @@ async updateReportStatus(req, res) {
     if (req.user.is_admin) {
       hasPermission = true;
     }
-    // Report owner can update their own report status
-    else if (req.user.id === existingReport.rows[0].user_id) {
-      hasPermission = true;
-    }
     // Agency users can update reports referred to their agency
     else if (req.user.is_agency_user) {
       // Check if this report is referred to the user's agency
@@ -1740,58 +1736,10 @@ async updateReportStatus(req, res) {
       [finalStatus, statusNotes, req.user.id, reportId]
     );
     
-    // Also update referral status if this is an agency user
-    if (req.user.is_agency_user) {
-      try {
-        const userAgency = await db.query(
-          'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
-          [req.user.id]
-        );
-        
-        if (userAgency.rows.length > 0) {
-          await db.query(
-            `UPDATE referrals SET
-              referral_status = $1,
-              referral_notes = $2,
-              updated_by = $3,
-              updated_at = CURRENT_TIMESTAMP
-            WHERE report_id = $4 AND agency_id = $5`,
-            [finalStatus, statusNotes, req.user.id, reportId, userAgency.rows[0].agency_id]
-          );
-        }
-      } catch (referralUpdateError) {
-        console.error('Error updating referral status:', referralUpdateError);
-        // Continue even if referral update fails
-      }
-    }
-    
-    // Send notification if user isn't anonymous and status has changed
-    if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
-      // Include notes in notification if provided
-      const notificationMessage = statusNotes 
-        ? `Your report status has been updated to "${finalStatus}". Note: ${statusNotes}`
-        : `Your report status has been updated to "${finalStatus}"`;
-        
-      await notificationService.createAndSendNotification(
-        existingReport.rows[0].user_id,
-        'Report Status Updated',
-        notificationMessage,
-        'status_update',
-        'report',
-        reportId
-      );
-    }
-    
-    // Log the action
-    const userType = req.user.is_admin ? 'Admin' : 
-                     req.user.is_agency_user ? 'Agency User' : 'User';
-    console.log(`[${userType}:${req.user.id}] Updated report ${reportId} status to ${finalStatus}${statusNotes ? ' with notes' : ''}`);
-    
     return res.status(200).json({
       success: true,
       data: updatedReport.rows[0],
       message: `Report status updated to "${finalStatus}" successfully`,
-      updatedBy: userType,
       notesAdded: !!statusNotes
     });
   } catch (error) {
@@ -1804,6 +1752,7 @@ async updateReportStatus(req, res) {
     });
   }
 }
+
 
 }
 
