@@ -1631,14 +1631,17 @@ async getLatestReports(req, res) {
   }
 }
 
-// Enhanced updateReportStatus method with agency user support
+// Enhanced updateReportStatus method with notes support
 async updateReportStatus(req, res) {
   try {
     const reportId = req.params.id;
-    let { status } = req.body;
+    let { status, notes } = req.body;
     
     // Normalize the status (trim whitespace and convert to lowercase)
     status = status?.toString().trim().toLowerCase();
+    
+    // Handle optional notes (trim whitespace if provided)
+    const statusNotes = notes ? notes.toString().trim() : null;
     
     // Define valid statuses (all lowercase for comparison)
     const validStatuses = [
@@ -1725,14 +1728,16 @@ async updateReportStatus(req, res) {
       });
     }
     
-    // Update report status
+    // Update report status with optional notes
     const updatedReport = await db.query(
       `UPDATE reports SET
         status = $1,
+        status_notes = $2,
+        status_updated_by = $3,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2
+      WHERE id = $4
       RETURNING *`,
-      [finalStatus, reportId]
+      [finalStatus, statusNotes, req.user.id, reportId]
     );
     
     // Also update referral status if this is an agency user
@@ -1747,10 +1752,11 @@ async updateReportStatus(req, res) {
           await db.query(
             `UPDATE referrals SET
               referral_status = $1,
-              updated_by = $2,
+              referral_notes = $2,
+              updated_by = $3,
               updated_at = CURRENT_TIMESTAMP
-            WHERE report_id = $3 AND agency_id = $4`,
-            [finalStatus, req.user.id, reportId, userAgency.rows[0].agency_id]
+            WHERE report_id = $4 AND agency_id = $5`,
+            [finalStatus, statusNotes, req.user.id, reportId, userAgency.rows[0].agency_id]
           );
         }
       } catch (referralUpdateError) {
@@ -1761,10 +1767,15 @@ async updateReportStatus(req, res) {
     
     // Send notification if user isn't anonymous and status has changed
     if (existingReport.rows[0].user_id && finalStatus !== existingReport.rows[0].status) {
+      // Include notes in notification if provided
+      const notificationMessage = statusNotes 
+        ? `Your report status has been updated to "${finalStatus}". Note: ${statusNotes}`
+        : `Your report status has been updated to "${finalStatus}"`;
+        
       await notificationService.createAndSendNotification(
         existingReport.rows[0].user_id,
         'Report Status Updated',
-        `Your report status has been updated to "${finalStatus}"`,
+        notificationMessage,
         'status_update',
         'report',
         reportId
@@ -1774,13 +1785,14 @@ async updateReportStatus(req, res) {
     // Log the action
     const userType = req.user.is_admin ? 'Admin' : 
                      req.user.is_agency_user ? 'Agency User' : 'User';
-    console.log(`[${userType}:${req.user.id}] Updated report ${reportId} status to ${finalStatus}`);
+    console.log(`[${userType}:${req.user.id}] Updated report ${reportId} status to ${finalStatus}${statusNotes ? ' with notes' : ''}`);
     
     return res.status(200).json({
       success: true,
       data: updatedReport.rows[0],
       message: `Report status updated to "${finalStatus}" successfully`,
-      updatedBy: userType
+      updatedBy: userType,
+      notesAdded: !!statusNotes
     });
   } catch (error) {
     console.error('Error updating report status:', error);
