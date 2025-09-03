@@ -18,36 +18,41 @@ exports.getAuditLogs = async (req, res) => {
 // Promote user to admin by email
 exports.promoteToAdmin = async (req, res) => {
   const targetEmail = req.params.email || req.body.email;
- 
+  
   if (!req.user.is_admin) {
     return res.status(403).json({ message: 'Only admins can promote users' });
   }
-
+ 
   if (!targetEmail) {
     return res.status(400).json({ message: 'Email is required' });
   }
- 
+  
   try {
-    const { rows } = await db.query('SELECT id, email, is_admin FROM users WHERE email = $1', [targetEmail]);
-     
+    const { rows } = await db.query('SELECT id, email, is_admin, is_agency_user FROM users WHERE email = $1', [targetEmail]);
+    
     if (rows.length === 0) {
       return res.status(404).json({ message: 'User not found with this email' });
     }
-     
+    
     if (rows[0].is_admin) {
       return res.status(400).json({ message: 'User is already an admin' });
     }
-
+    
+    // Check if user is an agency user
+    if (rows[0].is_agency_user) {
+      return res.status(400).json({ message: 'Cannot promote agency users to admin. Please revoke agency access first.' });
+    }
+ 
     const targetUserId = rows[0].id;
-     
+    
     await db.query('UPDATE users SET is_admin = true WHERE id = $1', [targetUserId]);
-     
+    
     await db.query(
       `INSERT INTO audit_logs (action_type, entity_type, entity_uuid, performed_by, details)
        VALUES ($1, $2, $3, $4, $5)`,
       ['PROMOTE', 'USER', targetUserId, req.user.id, `Promoted user ${targetEmail} to admin`]
     );
-     
+    
     return res.status(200).json({ 
       message: 'User promoted to admin',
       promotedUser: {
