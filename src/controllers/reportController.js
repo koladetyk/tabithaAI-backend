@@ -1724,25 +1724,40 @@ async updateReportStatus(req, res) {
       });
     }
     
-    // Update report status with optional notes (append to JSONB array)
-    const updatedReport = await db.query(
-      `UPDATE reports SET
-        status = $1,
-        status_notes = CASE 
-          WHEN $2 IS NOT NULL THEN 
-            COALESCE(status_notes, '[]'::jsonb) || jsonb_build_object(
-              'note', $2,
-              'status', $1,
-              'timestamp', NOW(),
-              'updated_by', $3
-            )::jsonb
-          ELSE status_notes
-        END,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
-      RETURNING *`,
-      [finalStatus, statusNotes, req.user.id, reportId]
-    );
+    // Update report status with optional notes
+    let updatedReport;
+    
+    if (statusNotes) {
+      // If notes are provided, append to JSONB array
+      updatedReport = await db.query(
+        `UPDATE reports SET
+          status = $1::text,
+          status_notes = COALESCE(status_notes, '[]'::jsonb) || $2::jsonb,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $3
+        RETURNING *`,
+        [
+          finalStatus, 
+          JSON.stringify({
+            note: statusNotes,
+            status: finalStatus,
+            timestamp: new Date().toISOString(),
+            updated_by: req.user.id
+          }),
+          reportId
+        ]
+      );
+    } else {
+      // If no notes, just update status
+      updatedReport = await db.query(
+        `UPDATE reports SET
+          status = $1::text,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        RETURNING *`,
+        [finalStatus, reportId]
+      );
+    }
     
     return res.status(200).json({
       success: true,
