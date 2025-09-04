@@ -33,7 +33,7 @@ router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboa
 router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
 
 // Get report status notes
-router.get('/reports/:id/status-notes', isAuthenticated, reportController.getReportStatusNotes);
+router.get('/:id/status-notes', isAuthenticated, reportController.getReportStatusNotes);
 
 // NEW: Get latest 100 reports referred to agencies (admin and agency users)
 router.get('/latest-referred', isAuthenticated, (req, res, next) => {
