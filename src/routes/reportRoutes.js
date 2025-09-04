@@ -32,6 +32,9 @@ router.get('/admin/stats', isAuthenticated, isAdmin, reportController.getDashboa
 // NEW: Get latest 100 reports - MOVED BEFORE /:id route
 router.get('/latest-reports', isAuthenticated, isAdmin, reportController.getLatestReports);
 
+// Get report status notes
+router.get('/reports/:id/status-notes', isAuthenticated, reportController.getReportStatusNotes);
+
 // NEW: Get latest 100 reports referred to agencies (admin and agency users)
 router.get('/latest-referred', isAuthenticated, (req, res, next) => {
   // Allow both admin and agency users

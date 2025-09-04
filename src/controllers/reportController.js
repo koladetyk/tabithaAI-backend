@@ -1631,7 +1631,7 @@ async getLatestReports(req, res) {
   }
 }
 
-// Enhanced updateReportStatus method with notes support
+// Enhanced updateReportStatus method with JSONB array notes support
 async updateReportStatus(req, res) {
   try {
     const reportId = req.params.id;
@@ -1724,15 +1724,24 @@ async updateReportStatus(req, res) {
       });
     }
     
-    // Update report status with optional notes
+    // Update report status with optional notes (append to JSONB array)
     const updatedReport = await db.query(
       `UPDATE reports SET
         status = $1,
-        status_notes = $2,
+        status_notes = CASE 
+          WHEN $2 IS NOT NULL THEN 
+            COALESCE(status_notes, '[]'::jsonb) || jsonb_build_object(
+              'note', $2,
+              'status', $1,
+              'timestamp', NOW(),
+              'updated_by', $3
+            )::jsonb
+          ELSE status_notes
+        END,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
+      WHERE id = $4
       RETURNING *`,
-      [finalStatus, statusNotes, reportId]
+      [finalStatus, statusNotes, req.user.id, reportId]
     );
     
     return res.status(200).json({
@@ -1747,6 +1756,80 @@ async updateReportStatus(req, res) {
     return res.status(500).json({
       success: false,
       message: 'Server error updating report status',
+      error: error.message
+    });
+  }
+}
+
+// Get status notes for a specific report
+async getReportStatusNotes(req, res) {
+  try {
+    const reportId = req.params.id;
+    
+    // Check if report exists and get status notes
+    const report = await db.query(
+      'SELECT id, status, status_notes, updated_at, user_id FROM reports WHERE id = $1',
+      [reportId]
+    );
+    
+    if (report.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+    
+    // Check permissions - users can view their own reports, admins can view any, agency users can view referred reports
+    let hasPermission = false;
+    
+    if (req.user.is_admin) {
+      hasPermission = true;
+    }
+    // Check if user owns the report
+    else if (req.user.id === report.rows[0].user_id) {
+      hasPermission = true;
+    }
+    // Agency users can view reports referred to their agency
+    else if (req.user.is_agency_user) {
+      const userAgency = await db.query(
+        'SELECT agency_id FROM agency_contacts WHERE user_id = $1',
+        [req.user.id]
+      );
+      
+      if (userAgency.rows.length > 0) {
+        const referralCheck = await db.query(
+          'SELECT id FROM referrals WHERE report_id = $1 AND agency_id = $2',
+          [reportId, userAgency.rows[0].agency_id]
+        );
+        
+        if (referralCheck.rows.length > 0) {
+          hasPermission = true;
+        }
+      }
+    }
+    
+    if (!hasPermission) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this report\'s status notes'
+      });
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        reportId: report.rows[0].id,
+        status: report.rows[0].status,
+        statusNotes: report.rows[0].status_notes,
+        lastUpdated: report.rows[0].updated_at
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error retrieving report status notes:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error retrieving status notes',
       error: error.message
     });
   }
